@@ -1,0 +1,8 @@
+bin/
+obj/
+.vs/
+.vscode/
+
+# Azure Functions local settings (contains secrets)
+local.settings.json
+
