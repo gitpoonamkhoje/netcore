@@ -198,4 +198,222 @@ WHERE app_id = @appId AND parm_tx = @name", conn);
         var legacyValue = await legacy.ExecuteScalarAsync(cancellationToken);
         return legacyValue is null or DBNull ? null : legacyValue.ToString();
     }
+
+    public async Task<bool> EvaluateSqlConditionAsync(
+    SqlConnection conn,
+    PollItem item,
+    CancellationToken cancellationToken)
+{
+    int v_sqlcmd_flag = 0;
+
+    try
+    {
+        // ============================================
+        // Equivalent of:
+        // exec (@v_SQLCmd_tx)
+        // ============================================
+
+        object queryResult;
+
+        using SqlCommand sqlCmd =
+            new SqlCommand(item.SqlCommandText, conn);
+
+        queryResult =
+            await sqlCmd.ExecuteScalarAsync(cancellationToken);
+
+        string actualValue =
+            Convert.ToString(queryResult);
+
+        string expectedValue =
+            Convert.ToString(item.ExpectedValue);
+
+        // ============================================
+        // Equivalent of:
+        // if expected == actual
+        // ============================================
+
+        if (actualValue == expectedValue)
+        {
+            await InsertJobLoadLogAsync(
+                conn,
+                item,
+                "The defined SQL condition has been met.",
+                "P",
+                250,
+                cancellationToken);
+
+            await InsertJobLoadLogAsync(
+                conn,
+                item,
+                "TSQL:" +
+                Left(item.SqlCommandText, 72) + "...",
+                "P",
+                300,
+                cancellationToken);
+
+            await InsertJobLoadLogAsync(
+                conn,
+                item,
+                "Expected Result: " + expectedValue,
+                "P",
+                350,
+                cancellationToken);
+
+            _log.LogInformation(
+                "Condition met for PollItem {ItemId}",
+                item.Id);
+
+            v_sqlcmd_flag = 1;
+        }
+        else
+        {
+            await InsertJobLoadLogAsync(
+                conn,
+                item,
+                "The defined SQL condition has NOT been met...yet",
+                "P",
+                250,
+                cancellationToken);
+
+            await InsertJobLoadLogAsync(
+                conn,
+                item,
+                "TSQL:" +
+                Left(item.SqlCommandText, 72) + "...",
+                "P",
+                300,
+                cancellationToken);
+
+            await InsertJobLoadLogAsync(
+                conn,
+                item,
+                "Expected Result: " + expectedValue,
+                "P",
+                350,
+                cancellationToken);
+
+            await InsertJobLoadLogAsync(
+                conn,
+                item,
+                "Actual Result: " + actualValue,
+                "P",
+                360,
+                cancellationToken);
+
+            _log.LogInformation(
+                "Condition NOT met for PollItem {ItemId}",
+                item.Id);
+
+            v_sqlcmd_flag = 0;
+        }
+
+        return v_sqlcmd_flag == 1;
+    }
+    catch (Exception ex)
+    {
+        _log.LogError(
+            ex,
+            "Error evaluating SQL condition for PollItem {ItemId}",
+            item.Id);
+
+        await InsertJobLoadLogAsync(
+            conn,
+            item,
+            ex.Message,
+            "E",
+            999,
+            cancellationToken);
+
+        return false;
+    }
+}
+
+private async Task InsertJobLoadLogAsync(
+    SqlConnection conn,
+    PollItem item,
+    string message,
+    string status,
+    int stepId,
+    CancellationToken cancellationToken)
+{
+    string sql = @"
+        INSERT INTO DBATASKS.dbo.JobLoadLog
+        (
+            process,
+            msgtxt,
+            msgstamp,
+            status,
+            stepid,
+            app_id,
+            trans_id
+        )
+        VALUES
+        (
+            @process,
+            @msgtxt,
+            GETDATE(),
+            @status,
+            @stepid,
+            @app_id,
+            @trans_id
+        )";
+
+    using SqlCommand cmd =
+        new SqlCommand(sql, conn);
+
+    cmd.Parameters.AddWithValue(
+        "@process",
+        item.ProcessName);
+
+    cmd.Parameters.AddWithValue(
+        "@msgtxt",
+        message);
+
+    cmd.Parameters.AddWithValue(
+        "@status",
+        status);
+
+    cmd.Parameters.AddWithValue(
+        "@stepid",
+        stepId);
+
+    cmd.Parameters.AddWithValue(
+        "@app_id",
+        item.AppId);
+
+    cmd.Parameters.AddWithValue(
+        "@trans_id",
+        item.TransactionId);
+
+    await cmd.ExecuteNonQueryAsync(cancellationToken);
+}
+
+private string Left(string value, int length)
+{
+    if (string.IsNullOrEmpty(value))
+        return value;
+
+    return value.Length <= length
+        ? value
+        : value.Substring(0, length);
+}
+
+/*
+public class PollItem
+{
+    public int Id { get; set; }
+
+    public string AppId { get; set; }
+
+    public string ProcessName { get; set; }
+
+    public Guid TransactionId { get; set; }
+
+    public string SqlCommandText { get; set; }
+
+    public string ExpectedValue { get; set; }
+
+    public string RunJob { get; set; }
+} */
+    
 }
