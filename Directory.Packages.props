@@ -15,6 +15,7 @@
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask" Version="1.1.2" />
 
     <!-- Required by your code -->
+    <PackageVersion Include="Azure.Identity" Version="1.13.2" />
     <PackageVersion Include="Azure.Storage.Files.Shares" Version="12.20.1" />
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="5.2.0" />
     <PackageVersion Include="SendGrid" Version="9.29.3" />

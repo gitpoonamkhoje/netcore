@@ -20,5 +20,13 @@ public sealed class AppResourcesOptions
 
     [Required]
     public string FileShareName { get; init; } = "";
+
+    public string DataFactorySubscriptionId { get; init; } = "";
+
+    public string DataFactoryResourceGroupName { get; init; } = "";
+
+    public string DataFactoryName { get; init; } = "";
+
+    public string AdfManagementApiVersion { get; init; } = "2018-06-01";
 }
 

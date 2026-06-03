@@ -27,9 +27,11 @@ var host = new HostBuilder()
         services.AddSingleton<IPollProcessRepository, PollProcessRepository>();
         services.AddSingleton<IFileReadyChecker, FileReadyChecker>();
         services.AddSingleton<IAdfPipelineTriggerService, AdfPipelineTriggerService>();
+        services.AddSingleton<IAdfPipelineMetadataService, AdfPipelineMetadataService>();
         services.AddSingleton<IPollNotificationService, PollNotificationService>();
 
         services.AddHttpClient(nameof(AdfPipelineTriggerService));
+        services.AddHttpClient(nameof(AdfPipelineMetadataService));
     })
     .Build();
 
