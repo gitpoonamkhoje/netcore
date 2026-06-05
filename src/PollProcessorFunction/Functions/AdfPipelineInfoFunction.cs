@@ -12,10 +12,14 @@ namespace PollProcessorFunction.Functions;
 public sealed class AdfPipelineInfoFunction
 {
     private readonly IAdfPipelineMetadataService _metadataService;
+    private readonly IAdfPipelineInfoSqlWriter _sqlWriter;
 
-    public AdfPipelineInfoFunction(IAdfPipelineMetadataService metadataService)
+    public AdfPipelineInfoFunction(
+        IAdfPipelineMetadataService metadataService,
+        IAdfPipelineInfoSqlWriter sqlWriter)
     {
         _metadataService = metadataService;
+        _sqlWriter = sqlWriter;
     }
 
     [Function("GetAdfPipelineInfo")]
@@ -31,6 +35,33 @@ public sealed class AdfPipelineInfoFunction
         {
             Count = pipelines.Count,
             Pipelines = pipelines
+        }, cancellationToken);
+
+        return response;
+    }
+
+    [Function("SaveAdfPipelineInfoToSql")]
+    public async Task<HttpResponseData> SaveToSqlAsync(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "adf/pipelines/info/sql")]
+        HttpRequestData req,
+        CancellationToken cancellationToken)
+    {
+        var pipelines = await _metadataService.GetAllPipelineDetailsAsync(cancellationToken);
+        var result = await _sqlWriter.SaveAsync(pipelines, cancellationToken);
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        await WriteJsonAsync(response, new
+        {
+            Status = "Saved",
+            TableName = "dbo.AdfPipelineInfoResult",
+            result.SnapshotId,
+            result.CapturedAtUtc,
+            result.PipelineCount,
+            result.ActivityCount,
+            result.ScriptActivityCount,
+            result.ReferenceCount,
+            result.TriggerCount,
+            result.TotalRowsInserted
         }, cancellationToken);
 
         return response;

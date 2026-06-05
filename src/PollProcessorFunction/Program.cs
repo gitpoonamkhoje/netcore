@@ -28,6 +28,7 @@ var host = new HostBuilder()
         services.AddSingleton<IFileReadyChecker, FileReadyChecker>();
         services.AddSingleton<IAdfPipelineTriggerService, AdfPipelineTriggerService>();
         services.AddSingleton<IAdfPipelineMetadataService, AdfPipelineMetadataService>();
+        services.AddSingleton<IAdfPipelineInfoSqlWriter, AdfPipelineInfoSqlWriter>();
         services.AddSingleton<IPollNotificationService, PollNotificationService>();
 
         services.AddHttpClient(nameof(AdfPipelineTriggerService));
