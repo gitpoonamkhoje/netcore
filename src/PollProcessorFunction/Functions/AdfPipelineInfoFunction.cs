@@ -112,6 +112,29 @@ public sealed class AdfPipelineInfoFunction
         return response;
     }
 
+    [Function("DownloadAdfPipelineReportExcel")]
+    public async Task<HttpResponseData> DownloadReportExcelAsync(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "adf/report/excel")]
+        HttpRequestData req,
+        CancellationToken cancellationToken)
+    {
+        var pipelines = await _metadataService.GetAllPipelineDetailsAsync(cancellationToken);
+        var pipelineRuns = await GetLatestPipelineRunsAsync(pipelines, cancellationToken);
+
+        using var workbook = BuildAdfReportWorkbook(pipelines, pipelineRuns);
+        await using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        response.Headers.Add("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        response.Headers.Add("Content-Disposition", "attachment; filename=\"adf-full-report.xlsx\"");
+
+        stream.Position = 0;
+        await stream.CopyToAsync(response.Body, cancellationToken);
+
+        return response;
+    }
+
     [Function("GetAdfPipelineInfoByName")]
     public async Task<HttpResponseData> GetByNameAsync(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "adf/pipelines/{pipelineName}/info")]
@@ -247,6 +270,280 @@ public sealed class AdfPipelineInfoFunction
 
         FormatSheet(sheet);
         return workbook;
+    }
+
+    private static XLWorkbook BuildAdfReportWorkbook(
+        IReadOnlyList<AdfPipelineDetails> pipelines,
+        IReadOnlyDictionary<string, AdfPipelineRunSummary> pipelineRuns)
+    {
+        var workbook = new XLWorkbook();
+
+        AddReportSummarySheet(workbook, pipelines, pipelineRuns);
+        AddReportPipelinesSheet(workbook, pipelines, pipelineRuns);
+        AddReportActivitiesSheet(workbook, pipelines, pipelineRuns);
+        AddReportScriptsSheet(workbook, pipelines, pipelineRuns);
+        AddReportTriggersSheet(workbook, pipelines, pipelineRuns);
+        AddReportReferencesSheet(workbook, pipelines);
+        AddReportRuntimeSheet(workbook, pipelines, pipelineRuns);
+
+        return workbook;
+    }
+
+    private static void AddReportSummarySheet(
+        XLWorkbook workbook,
+        IReadOnlyList<AdfPipelineDetails> pipelines,
+        IReadOnlyDictionary<string, AdfPipelineRunSummary> pipelineRuns)
+    {
+        var sheet = workbook.Worksheets.Add("Summary");
+        WriteHeader(sheet, "Metric", "Value");
+
+        sheet.Cell(2, 1).Value = "Generated Utc";
+        sheet.Cell(2, 2).Value = DateTime.UtcNow.ToString("O");
+        sheet.Cell(3, 1).Value = "Pipeline Count";
+        sheet.Cell(3, 2).Value = pipelines.Count;
+        sheet.Cell(4, 1).Value = "Activity Count";
+        sheet.Cell(4, 2).Value = pipelines.Sum(pipeline => pipeline.Activities.Count);
+        sheet.Cell(5, 1).Value = "Script Activity Count";
+        sheet.Cell(5, 2).Value = pipelines.Sum(pipeline => pipeline.ScriptActivities.Count);
+        sheet.Cell(6, 1).Value = "Trigger Count";
+        sheet.Cell(6, 2).Value = pipelines.Sum(pipeline => pipeline.Triggers.Count);
+        sheet.Cell(7, 1).Value = "Linked Reference Count";
+        sheet.Cell(7, 2).Value = pipelines.Sum(pipeline => pipeline.ReferencedResources.Count);
+        sheet.Cell(8, 1).Value = "Pipelines With Latest Run";
+        sheet.Cell(8, 2).Value = pipelineRuns.Count;
+
+        FormatSheet(sheet);
+    }
+
+    private static void AddReportPipelinesSheet(
+        XLWorkbook workbook,
+        IReadOnlyList<AdfPipelineDetails> pipelines,
+        IReadOnlyDictionary<string, AdfPipelineRunSummary> pipelineRuns)
+    {
+        var sheet = workbook.Worksheets.Add("Pipelines");
+        WriteHeader(
+            sheet,
+            "Folder Name",
+            "Pipeline Name",
+            "Latest Run Status",
+            "Latest Run Id",
+            "Run Start Utc",
+            "Run End Utc",
+            "Duration Seconds",
+            "Duration",
+            "Pipeline Json");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            pipelineRuns.TryGetValue(pipeline.PipelineName, out var run);
+
+            sheet.Cell(row, 1).Value = GetFolderName(pipeline);
+            sheet.Cell(row, 2).Value = pipeline.PipelineName;
+            sheet.Cell(row, 3).Value = run?.Status ?? "";
+            sheet.Cell(row, 4).Value = run?.RunId ?? "";
+            sheet.Cell(row, 5).Value = run?.RunStartUtc?.ToString("O") ?? "";
+            sheet.Cell(row, 6).Value = run?.RunEndUtc?.ToString("O") ?? "";
+            sheet.Cell(row, 7).Value = run?.DurationSeconds is null ? "" : run.DurationSeconds.Value;
+            sheet.Cell(row, 8).Value = FormatDuration(run?.DurationSeconds);
+            sheet.Cell(row, 9).Value = ToJson(pipeline.Pipeline);
+            row++;
+        }
+
+        FormatSheet(sheet);
+    }
+
+    private static void AddReportActivitiesSheet(
+        XLWorkbook workbook,
+        IReadOnlyList<AdfPipelineDetails> pipelines,
+        IReadOnlyDictionary<string, AdfPipelineRunSummary> pipelineRuns)
+    {
+        var sheet = workbook.Worksheets.Add("Activities");
+        WriteHeader(
+            sheet,
+            "Folder Name",
+            "Pipeline Name",
+            "Activity Name",
+            "Activity Type",
+            "Status",
+            "Description",
+            "Latest Pipeline Run Status",
+            "Duration Seconds",
+            "Duration",
+            "Type Properties Json");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            pipelineRuns.TryGetValue(pipeline.PipelineName, out var run);
+
+            foreach (var activity in pipeline.Activities)
+            {
+                sheet.Cell(row, 1).Value = GetFolderName(pipeline);
+                sheet.Cell(row, 2).Value = pipeline.PipelineName;
+                sheet.Cell(row, 3).Value = activity.Name;
+                sheet.Cell(row, 4).Value = activity.Type;
+                sheet.Cell(row, 5).Value = activity.Status;
+                sheet.Cell(row, 6).Value = activity.Description;
+                sheet.Cell(row, 7).Value = run?.Status ?? "";
+                sheet.Cell(row, 8).Value = run?.DurationSeconds is null ? "" : run.DurationSeconds.Value;
+                sheet.Cell(row, 9).Value = FormatDuration(run?.DurationSeconds);
+                sheet.Cell(row, 10).Value = ToJson(activity.TypeProperties);
+                row++;
+            }
+        }
+
+        FormatSheet(sheet);
+    }
+
+    private static void AddReportScriptsSheet(
+        XLWorkbook workbook,
+        IReadOnlyList<AdfPipelineDetails> pipelines,
+        IReadOnlyDictionary<string, AdfPipelineRunSummary> pipelineRuns)
+    {
+        var sheet = workbook.Worksheets.Add("Scripts");
+        WriteHeader(
+            sheet,
+            "Folder Name",
+            "Pipeline Name",
+            "Script Activity Name",
+            "Activity Type",
+            "Status",
+            "Description",
+            "Latest Pipeline Run Status",
+            "Duration Seconds",
+            "Duration",
+            "Scripts Json",
+            "Type Properties Json");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            pipelineRuns.TryGetValue(pipeline.PipelineName, out var run);
+
+            foreach (var activity in pipeline.ScriptActivities)
+            {
+                sheet.Cell(row, 1).Value = GetFolderName(pipeline);
+                sheet.Cell(row, 2).Value = pipeline.PipelineName;
+                sheet.Cell(row, 3).Value = activity.Name;
+                sheet.Cell(row, 4).Value = activity.Type;
+                sheet.Cell(row, 5).Value = activity.Status;
+                sheet.Cell(row, 6).Value = activity.Description;
+                sheet.Cell(row, 7).Value = run?.Status ?? "";
+                sheet.Cell(row, 8).Value = run?.DurationSeconds is null ? "" : run.DurationSeconds.Value;
+                sheet.Cell(row, 9).Value = FormatDuration(run?.DurationSeconds);
+                sheet.Cell(row, 10).Value = ToJson(activity.Scripts);
+                sheet.Cell(row, 11).Value = ToJson(activity.TypeProperties);
+                row++;
+            }
+        }
+
+        FormatSheet(sheet);
+    }
+
+    private static void AddReportTriggersSheet(
+        XLWorkbook workbook,
+        IReadOnlyList<AdfPipelineDetails> pipelines,
+        IReadOnlyDictionary<string, AdfPipelineRunSummary> pipelineRuns)
+    {
+        var sheet = workbook.Worksheets.Add("Triggers");
+        WriteHeader(
+            sheet,
+            "Folder Name",
+            "Pipeline Name",
+            "Trigger Name",
+            "Trigger Type",
+            "Status",
+            "Description",
+            "Latest Pipeline Run Status",
+            "Duration Seconds",
+            "Duration",
+            "Trigger Json");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            pipelineRuns.TryGetValue(pipeline.PipelineName, out var run);
+
+            foreach (var trigger in pipeline.Triggers)
+            {
+                sheet.Cell(row, 1).Value = GetFolderName(pipeline);
+                sheet.Cell(row, 2).Value = pipeline.PipelineName;
+                sheet.Cell(row, 3).Value = trigger.Value<string>("name") ?? "";
+                sheet.Cell(row, 4).Value = trigger.SelectToken("properties.type")?.Value<string>() ?? "";
+                sheet.Cell(row, 5).Value = GetTriggerStatus(trigger);
+                sheet.Cell(row, 6).Value = trigger.SelectToken("properties.description")?.Value<string>() ?? "";
+                sheet.Cell(row, 7).Value = run?.Status ?? "";
+                sheet.Cell(row, 8).Value = run?.DurationSeconds is null ? "" : run.DurationSeconds.Value;
+                sheet.Cell(row, 9).Value = FormatDuration(run?.DurationSeconds);
+                sheet.Cell(row, 10).Value = ToJson(trigger);
+                row++;
+            }
+        }
+
+        FormatSheet(sheet);
+    }
+
+    private static void AddReportReferencesSheet(
+        XLWorkbook workbook,
+        IReadOnlyList<AdfPipelineDetails> pipelines)
+    {
+        var sheet = workbook.Worksheets.Add("Linked References");
+        WriteHeader(sheet, "Folder Name", "Pipeline Name", "Reference Name", "Reference Type", "Json Path");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            foreach (var reference in pipeline.ReferencedResources)
+            {
+                sheet.Cell(row, 1).Value = GetFolderName(pipeline);
+                sheet.Cell(row, 2).Value = pipeline.PipelineName;
+                sheet.Cell(row, 3).Value = reference.ReferenceName;
+                sheet.Cell(row, 4).Value = reference.ReferenceType;
+                sheet.Cell(row, 5).Value = reference.Path;
+                row++;
+            }
+        }
+
+        FormatSheet(sheet);
+    }
+
+    private static void AddReportRuntimeSheet(
+        XLWorkbook workbook,
+        IReadOnlyList<AdfPipelineDetails> pipelines,
+        IReadOnlyDictionary<string, AdfPipelineRunSummary> pipelineRuns)
+    {
+        var sheet = workbook.Worksheets.Add("Runtime");
+        WriteHeader(
+            sheet,
+            "Folder Name",
+            "Pipeline Name",
+            "Run Status",
+            "Run Id",
+            "Run Start Utc",
+            "Run End Utc",
+            "Duration Seconds",
+            "Duration",
+            "Raw Run Json");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            pipelineRuns.TryGetValue(pipeline.PipelineName, out var run);
+
+            sheet.Cell(row, 1).Value = GetFolderName(pipeline);
+            sheet.Cell(row, 2).Value = pipeline.PipelineName;
+            sheet.Cell(row, 3).Value = run?.Status ?? "";
+            sheet.Cell(row, 4).Value = run?.RunId ?? "";
+            sheet.Cell(row, 5).Value = run?.RunStartUtc?.ToString("O") ?? "";
+            sheet.Cell(row, 6).Value = run?.RunEndUtc?.ToString("O") ?? "";
+            sheet.Cell(row, 7).Value = run?.DurationSeconds is null ? "" : run.DurationSeconds.Value;
+            sheet.Cell(row, 8).Value = FormatDuration(run?.DurationSeconds);
+            sheet.Cell(row, 9).Value = ToJson(run?.RawRun);
+            row++;
+        }
+
+        FormatSheet(sheet);
     }
 
     private static void AddRuntimeRow(
@@ -452,5 +749,10 @@ public sealed class AdfPipelineInfoFunction
         return token is null
             ? ""
             : token.ToString(Formatting.Indented);
+    }
+
+    private static string GetFolderName(AdfPipelineDetails pipeline)
+    {
+        return pipeline.Pipeline.SelectToken("properties.folder.name")?.Value<string>() ?? "";
     }
 }
