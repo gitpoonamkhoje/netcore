@@ -23,6 +23,10 @@ public sealed class AdfActivitySummary
 
     public string Type { get; init; } = "";
 
+    public string Status { get; init; } = "";
+
+    public string Description { get; init; } = "";
+
     public JToken? DependsOn { get; init; }
 
     public JToken? Inputs { get; init; }

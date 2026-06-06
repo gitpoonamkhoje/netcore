@@ -43,6 +43,8 @@ public sealed class AdfPipelineInfoSqlWriter : IAdfPipelineInfoSqlWriter
                     pipeline.PipelineName,
                     "Pipeline",
                     null,
+                    null,
+                    null,
                     ToJson(pipeline.Pipeline),
                     cancellationToken);
                 counters.PipelineCount++;
@@ -58,6 +60,8 @@ public sealed class AdfPipelineInfoSqlWriter : IAdfPipelineInfoSqlWriter
                         pipeline.PipelineName,
                         activity.Name,
                         activity.Type,
+                        activity.Status,
+                        activity.Description,
                         null,
                         JsonConvert.SerializeObject(activity, Formatting.Indented),
                         cancellationToken);
@@ -75,6 +79,8 @@ public sealed class AdfPipelineInfoSqlWriter : IAdfPipelineInfoSqlWriter
                         pipeline.PipelineName,
                         activity.Name,
                         activity.Type,
+                        activity.Status,
+                        activity.Description,
                         null,
                         ToJson(activity.Scripts ?? activity.TypeProperties),
                         cancellationToken);
@@ -92,6 +98,8 @@ public sealed class AdfPipelineInfoSqlWriter : IAdfPipelineInfoSqlWriter
                         pipeline.PipelineName,
                         reference.ReferenceName,
                         reference.ReferenceType,
+                        null,
+                        null,
                         reference.Path,
                         JsonConvert.SerializeObject(reference, Formatting.Indented),
                         cancellationToken);
@@ -109,6 +117,8 @@ public sealed class AdfPipelineInfoSqlWriter : IAdfPipelineInfoSqlWriter
                         pipeline.PipelineName,
                         trigger.Value<string>("name") ?? "",
                         trigger.SelectToken("properties.type")?.Value<string>() ?? "",
+                        null,
+                        null,
                         null,
                         ToJson(trigger),
                         cancellationToken);
@@ -154,12 +164,24 @@ BEGIN
         PipelineName NVARCHAR(256) NOT NULL,
         ObjectName NVARCHAR(512) NULL,
         ObjectType NVARCHAR(128) NULL,
+        ObjectStatus NVARCHAR(50) NULL,
+        Description NVARCHAR(MAX) NULL,
         JsonPath NVARCHAR(1000) NULL,
         JsonValue NVARCHAR(MAX) NULL
     );
 
     CREATE INDEX IX_AdfPipelineInfoResult_Snapshot
         ON dbo.AdfPipelineInfoResult (SnapshotId, FeatureName, PipelineName);
+END;
+
+IF COL_LENGTH(N'dbo.AdfPipelineInfoResult', N'ObjectStatus') IS NULL
+BEGIN
+    ALTER TABLE dbo.AdfPipelineInfoResult ADD ObjectStatus NVARCHAR(50) NULL;
+END;
+
+IF COL_LENGTH(N'dbo.AdfPipelineInfoResult', N'Description') IS NULL
+BEGIN
+    ALTER TABLE dbo.AdfPipelineInfoResult ADD Description NVARCHAR(MAX) NULL;
 END", conn, transaction);
 
         await cmd.ExecuteNonQueryAsync(cancellationToken);
@@ -174,6 +196,8 @@ END", conn, transaction);
         string pipelineName,
         string? objectName,
         string? objectType,
+        string? objectStatus,
+        string? description,
         string? jsonPath,
         string? jsonValue,
         CancellationToken cancellationToken)
@@ -187,6 +211,8 @@ INSERT INTO dbo.AdfPipelineInfoResult
     PipelineName,
     ObjectName,
     ObjectType,
+    ObjectStatus,
+    Description,
     JsonPath,
     JsonValue
 )
@@ -198,6 +224,8 @@ VALUES
     @PipelineName,
     @ObjectName,
     @ObjectType,
+    @ObjectStatus,
+    @Description,
     @JsonPath,
     @JsonValue
 );", conn, transaction);
@@ -208,6 +236,8 @@ VALUES
         cmd.Parameters.AddWithValue("@PipelineName", pipelineName);
         AddNullableString(cmd, "@ObjectName", objectName, 512);
         AddNullableString(cmd, "@ObjectType", objectType, 128);
+        AddNullableString(cmd, "@ObjectStatus", objectStatus, 50);
+        AddNullableString(cmd, "@Description", description, -1);
         AddNullableString(cmd, "@JsonPath", jsonPath, 1000);
         AddNullableString(cmd, "@JsonValue", jsonValue, -1);
 

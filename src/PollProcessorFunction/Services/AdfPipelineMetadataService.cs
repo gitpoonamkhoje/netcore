@@ -1,7 +1,9 @@
 using System.Net.Http.Headers;
+using System.Text;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using PollProcessorFunction.Models;
 
@@ -53,6 +55,64 @@ public sealed class AdfPipelineMetadataService : IAdfPipelineMetadataService
         return BuildDetails(pipeline, triggers);
     }
 
+    public async Task<AdfPipelineRunSummary?> GetLatestPipelineRunAsync(
+        string pipelineName,
+        TimeSpan lookback,
+        CancellationToken cancellationToken = default)
+    {
+        if (lookback <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(lookback), "Lookback must be greater than zero.");
+        }
+
+        var runs = await GetPipelineRunsAsync(
+            pipelineName,
+            DateTime.UtcNow.Subtract(lookback),
+            DateTime.UtcNow,
+            cancellationToken);
+
+        return runs
+            .OrderByDescending(run => run.RunStartUtc ?? DateTime.MinValue)
+            .FirstOrDefault();
+    }
+
+    public async Task<IReadOnlyList<AdfPipelineRunSummary>> GetPipelineRunsAsync(
+        string pipelineName,
+        DateTime lastUpdatedAfterUtc,
+        DateTime lastUpdatedBeforeUtc,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(pipelineName))
+        {
+            throw new ArgumentException("Pipeline name is required.", nameof(pipelineName));
+        }
+
+        if (lastUpdatedAfterUtc >= lastUpdatedBeforeUtc)
+        {
+            throw new ArgumentException("Last updated start time must be before end time.");
+        }
+
+        var payload = new
+        {
+            lastUpdatedAfter = EnsureUtc(lastUpdatedAfterUtc),
+            lastUpdatedBefore = EnsureUtc(lastUpdatedBeforeUtc),
+            filters = new[]
+            {
+                new
+                {
+                    operand = "PipelineName",
+                    @operator = "Equals",
+                    values = new[] { pipelineName }
+                }
+            }
+        };
+
+        var json = await PostArmJsonAsync($"{FactoryPath}/queryPipelineRuns", payload, cancellationToken);
+        return json["value"] is JArray values
+            ? values.OfType<JObject>().Select(ToPipelineRunSummary).ToArray()
+            : Array.Empty<AdfPipelineRunSummary>();
+    }
+
     private async Task<IReadOnlyList<JObject>> ListPipelinesAsync(CancellationToken cancellationToken)
     {
         var json = await GetArmJsonAsync($"{FactoryPath}/pipelines", cancellationToken);
@@ -94,6 +154,45 @@ public sealed class AdfPipelineMetadataService : IAdfPipelineMetadataService
         using var request = new HttpRequestMessage(
             HttpMethod.Get,
             $"https://management.azure.com{resourcePath}?api-version={Uri.EscapeDataString(apiVersion)}");
+
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+
+        using var response = await client.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"ADF metadata request failed ({(int)response.StatusCode}): {body}",
+                null,
+                response.StatusCode);
+        }
+
+        return JObject.Parse(body);
+    }
+
+    private async Task<JObject> PostArmJsonAsync(
+        string resourcePath,
+        object payload,
+        CancellationToken cancellationToken)
+    {
+        var token = await _credential.GetTokenAsync(
+            new TokenRequestContext(new[] { ArmScope }),
+            cancellationToken);
+
+        var apiVersion = GetSetting("AdfManagementApiVersion")
+            ?? DefaultApiVersion;
+
+        var client = _httpClientFactory.CreateClient(nameof(AdfPipelineMetadataService));
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"https://management.azure.com{resourcePath}?api-version={Uri.EscapeDataString(apiVersion)}")
+        {
+            Content = new StringContent(
+                JsonConvert.SerializeObject(payload),
+                Encoding.UTF8,
+                "application/json")
+        };
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
 
@@ -169,11 +268,40 @@ public sealed class AdfPipelineMetadataService : IAdfPipelineMetadataService
         {
             Name = activity.Value<string>("name") ?? "",
             Type = activity.Value<string>("type") ?? "",
+            Status = GetActivityStatus(activity),
+            Description = activity.Value<string>("description") ?? "",
             DependsOn = activity["dependsOn"],
             Inputs = activity["inputs"],
             Outputs = activity["outputs"],
             TypeProperties = activity["typeProperties"],
             Scripts = activity.SelectToken("typeProperties.scripts")
+        };
+    }
+
+    private static string GetActivityStatus(JObject activity)
+    {
+        var state = activity.Value<string>("state");
+        return string.Equals(state, "Inactive", StringComparison.OrdinalIgnoreCase)
+            ? "Inactive"
+            : "Active";
+    }
+
+    private static AdfPipelineRunSummary ToPipelineRunSummary(JObject run)
+    {
+        var runStart = run.Value<DateTime?>("runStart");
+        var runEnd = run.Value<DateTime?>("runEnd");
+
+        return new AdfPipelineRunSummary
+        {
+            PipelineName = run.Value<string>("pipelineName") ?? "",
+            RunId = run.Value<string>("runId") ?? "",
+            Status = run.Value<string>("status") ?? "",
+            RunStartUtc = runStart,
+            RunEndUtc = runEnd,
+            DurationSeconds = runStart is not null && runEnd is not null
+                ? (runEnd.Value - runStart.Value).TotalSeconds
+                : null,
+            RawRun = run
         };
     }
 
@@ -228,4 +356,11 @@ public sealed class AdfPipelineMetadataService : IAdfPipelineMetadataService
     }
 
     private static string Escape(string value) => Uri.EscapeDataString(value);
+
+    private static DateTime EnsureUtc(DateTime value)
+    {
+        return value.Kind == DateTimeKind.Utc
+            ? value
+            : value.ToUniversalTime();
+    }
 }

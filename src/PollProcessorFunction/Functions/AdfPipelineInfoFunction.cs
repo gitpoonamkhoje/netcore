@@ -89,6 +89,29 @@ public sealed class AdfPipelineInfoFunction
         return response;
     }
 
+    [Function("DownloadAdfPipelineRuntimeExcel")]
+    public async Task<HttpResponseData> DownloadRuntimeExcelAsync(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "adf/pipelines/runtime/excel")]
+        HttpRequestData req,
+        CancellationToken cancellationToken)
+    {
+        var pipelines = await _metadataService.GetAllPipelineDetailsAsync(cancellationToken);
+        var pipelineRuns = await GetLatestPipelineRunsAsync(pipelines, cancellationToken);
+
+        using var workbook = BuildRuntimeWorkbook(pipelines, pipelineRuns);
+        await using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        response.Headers.Add("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        response.Headers.Add("Content-Disposition", "attachment; filename=\"adf-pipeline-runtime-info.xlsx\"");
+
+        stream.Position = 0;
+        await stream.CopyToAsync(response.Body, cancellationToken);
+
+        return response;
+    }
+
     [Function("GetAdfPipelineInfoByName")]
     public async Task<HttpResponseData> GetByNameAsync(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "adf/pipelines/{pipelineName}/info")]
@@ -139,6 +162,140 @@ public sealed class AdfPipelineInfoFunction
         return workbook;
     }
 
+    private async Task<IReadOnlyDictionary<string, AdfPipelineRunSummary>> GetLatestPipelineRunsAsync(
+        IReadOnlyList<AdfPipelineDetails> pipelines,
+        CancellationToken cancellationToken)
+    {
+        var tasks = pipelines.Select(async pipeline => new
+        {
+            pipeline.PipelineName,
+            Run = await _metadataService.GetLatestPipelineRunAsync(
+                pipeline.PipelineName,
+                TimeSpan.FromDays(45),
+                cancellationToken)
+        });
+
+        var results = await Task.WhenAll(tasks);
+        return results
+            .Where(result => result.Run is not null)
+            .ToDictionary(
+                result => result.PipelineName,
+                result => result.Run!,
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static XLWorkbook BuildRuntimeWorkbook(
+        IReadOnlyList<AdfPipelineDetails> pipelines,
+        IReadOnlyDictionary<string, AdfPipelineRunSummary> pipelineRuns)
+    {
+        var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("Pipeline Runtime");
+        WriteHeader(
+            sheet,
+            "Folder Name",
+            "Pipeline Name",
+            "Activity/Script/Trigger Name",
+            "Object Category",
+            "Type",
+            "Status",
+            "Description",
+            "Latest Pipeline Run Status",
+            "Latest Pipeline Run Id",
+            "Latest Pipeline Run Start Utc",
+            "Latest Pipeline Run End Utc",
+            "Exact Time Taken Seconds",
+            "Exact Time Taken");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            var folderName = pipeline.Pipeline.SelectToken("properties.folder.name")?.Value<string>() ?? "";
+            pipelineRuns.TryGetValue(pipeline.PipelineName, out var run);
+
+            foreach (var activity in pipeline.Activities)
+            {
+                AddRuntimeRow(
+                    sheet,
+                    row++,
+                    folderName,
+                    pipeline.PipelineName,
+                    activity.Name,
+                    string.Equals(activity.Type, "Script", StringComparison.OrdinalIgnoreCase)
+                        ? "Script"
+                        : "Activity",
+                    activity.Type,
+                    activity.Status,
+                    activity.Description,
+                    run);
+            }
+
+            foreach (var trigger in pipeline.Triggers)
+            {
+                AddRuntimeRow(
+                    sheet,
+                    row++,
+                    folderName,
+                    pipeline.PipelineName,
+                    trigger.Value<string>("name") ?? "",
+                    "Trigger",
+                    trigger.SelectToken("properties.type")?.Value<string>() ?? "",
+                    GetTriggerStatus(trigger),
+                    trigger.SelectToken("properties.description")?.Value<string>() ?? "",
+                    run);
+            }
+        }
+
+        FormatSheet(sheet);
+        return workbook;
+    }
+
+    private static void AddRuntimeRow(
+        IXLWorksheet sheet,
+        int row,
+        string folderName,
+        string pipelineName,
+        string objectName,
+        string objectCategory,
+        string objectType,
+        string status,
+        string description,
+        AdfPipelineRunSummary? run)
+    {
+        sheet.Cell(row, 1).Value = folderName;
+        sheet.Cell(row, 2).Value = pipelineName;
+        sheet.Cell(row, 3).Value = objectName;
+        sheet.Cell(row, 4).Value = objectCategory;
+        sheet.Cell(row, 5).Value = objectType;
+        sheet.Cell(row, 6).Value = status;
+        sheet.Cell(row, 7).Value = description;
+        sheet.Cell(row, 8).Value = run?.Status ?? "";
+        sheet.Cell(row, 9).Value = run?.RunId ?? "";
+        sheet.Cell(row, 10).Value = run?.RunStartUtc?.ToString("O") ?? "";
+        sheet.Cell(row, 11).Value = run?.RunEndUtc?.ToString("O") ?? "";
+        sheet.Cell(row, 12).Value = run?.DurationSeconds is null
+            ? ""
+            : run.DurationSeconds.Value;
+        sheet.Cell(row, 13).Value = FormatDuration(run?.DurationSeconds);
+    }
+
+    private static string GetTriggerStatus(JToken trigger)
+    {
+        var runtimeState = trigger.SelectToken("properties.runtimeState")?.Value<string>();
+        return string.Equals(runtimeState, "Started", StringComparison.OrdinalIgnoreCase)
+            ? "Active"
+            : "Inactive";
+    }
+
+    private static string FormatDuration(double? durationSeconds)
+    {
+        if (durationSeconds is null)
+        {
+            return "";
+        }
+
+        return TimeSpan.FromSeconds(durationSeconds.Value).ToString(@"hh\:mm\:ss");
+    }
+
     private static void AddPipelinesSheet(XLWorkbook workbook, IReadOnlyList<AdfPipelineDetails> pipelines)
     {
         var sheet = workbook.Worksheets.Add("Pipelines");
@@ -163,6 +320,8 @@ public sealed class AdfPipelineInfoFunction
             "Pipeline Name",
             "Activity Name",
             "Activity Type",
+            "Activity Status",
+            "Activity Description",
             "Depends On Json",
             "Inputs Json",
             "Outputs Json",
@@ -176,10 +335,12 @@ public sealed class AdfPipelineInfoFunction
                 sheet.Cell(row, 1).Value = pipeline.PipelineName;
                 sheet.Cell(row, 2).Value = activity.Name;
                 sheet.Cell(row, 3).Value = activity.Type;
-                sheet.Cell(row, 4).Value = ToJson(activity.DependsOn);
-                sheet.Cell(row, 5).Value = ToJson(activity.Inputs);
-                sheet.Cell(row, 6).Value = ToJson(activity.Outputs);
-                sheet.Cell(row, 7).Value = ToJson(activity.TypeProperties);
+                sheet.Cell(row, 4).Value = activity.Status;
+                sheet.Cell(row, 5).Value = activity.Description;
+                sheet.Cell(row, 6).Value = ToJson(activity.DependsOn);
+                sheet.Cell(row, 7).Value = ToJson(activity.Inputs);
+                sheet.Cell(row, 8).Value = ToJson(activity.Outputs);
+                sheet.Cell(row, 9).Value = ToJson(activity.TypeProperties);
                 row++;
             }
         }
@@ -190,7 +351,15 @@ public sealed class AdfPipelineInfoFunction
     private static void AddScriptsSheet(XLWorkbook workbook, IReadOnlyList<AdfPipelineDetails> pipelines)
     {
         var sheet = workbook.Worksheets.Add("Script Activities");
-        WriteHeader(sheet, "Pipeline Name", "Activity Name", "Activity Type", "Scripts Json", "Type Properties Json");
+        WriteHeader(
+            sheet,
+            "Pipeline Name",
+            "Activity Name",
+            "Activity Type",
+            "Activity Status",
+            "Activity Description",
+            "Scripts Json",
+            "Type Properties Json");
 
         var row = 2;
         foreach (var pipeline in pipelines)
@@ -200,8 +369,10 @@ public sealed class AdfPipelineInfoFunction
                 sheet.Cell(row, 1).Value = pipeline.PipelineName;
                 sheet.Cell(row, 2).Value = activity.Name;
                 sheet.Cell(row, 3).Value = activity.Type;
-                sheet.Cell(row, 4).Value = ToJson(activity.Scripts);
-                sheet.Cell(row, 5).Value = ToJson(activity.TypeProperties);
+                sheet.Cell(row, 4).Value = activity.Status;
+                sheet.Cell(row, 5).Value = activity.Description;
+                sheet.Cell(row, 6).Value = ToJson(activity.Scripts);
+                sheet.Cell(row, 7).Value = ToJson(activity.TypeProperties);
                 row++;
             }
         }
