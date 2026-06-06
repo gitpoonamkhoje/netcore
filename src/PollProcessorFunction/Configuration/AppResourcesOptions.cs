@@ -28,5 +28,9 @@ public sealed class AppResourcesOptions
     public string DataFactoryName { get; init; } = "";
 
     public string AdfManagementApiVersion { get; init; } = "2018-06-01";
+
+    public string SqlAgentValidationConnectionString { get; init; } = "";
+
+    public string AdfValidationConnectionString { get; init; } = "";
 }
 
