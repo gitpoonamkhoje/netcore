@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using ClosedXML.Excel;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -11,6 +12,10 @@ namespace PollProcessorFunction.Functions;
 
 public sealed class AdfPipelineInfoFunction
 {
+    private static readonly Regex SqlTableNameRegex = new(
+        @"\b(?:FROM|JOIN|UPDATE|INTO|MERGE\s+INTO)\s+([A-Za-z_][A-Za-z0-9_\[\]\.]*)(?:\s|$)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private readonly IAdfPipelineMetadataService _metadataService;
     private readonly IAdfPipelineInfoSqlWriter _sqlWriter;
 
@@ -128,6 +133,28 @@ public sealed class AdfPipelineInfoFunction
         var response = req.CreateResponse(HttpStatusCode.OK);
         response.Headers.Add("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         response.Headers.Add("Content-Disposition", "attachment; filename=\"adf-full-report.xlsx\"");
+
+        stream.Position = 0;
+        await stream.CopyToAsync(response.Body, cancellationToken);
+
+        return response;
+    }
+
+    [Function("DownloadAdfValidationInventoryExcel")]
+    public async Task<HttpResponseData> DownloadValidationInventoryExcelAsync(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "adf/validation-inventory/excel")]
+        HttpRequestData req,
+        CancellationToken cancellationToken)
+    {
+        var pipelines = await _metadataService.GetAllPipelineDetailsAsync(cancellationToken);
+
+        using var workbook = BuildValidationInventoryWorkbook(pipelines);
+        await using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        response.Headers.Add("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        response.Headers.Add("Content-Disposition", "attachment; filename=\"adf-validation-inventory.xlsx\"");
 
         stream.Position = 0;
         await stream.CopyToAsync(response.Body, cancellationToken);
@@ -287,6 +314,153 @@ public sealed class AdfPipelineInfoFunction
         AddReportRuntimeSheet(workbook, pipelines, pipelineRuns);
 
         return workbook;
+    }
+
+    private static XLWorkbook BuildValidationInventoryWorkbook(IReadOnlyList<AdfPipelineDetails> pipelines)
+    {
+        var workbook = new XLWorkbook();
+
+        AddValidationInventorySheet(workbook, pipelines);
+        AddDetectedScriptsSheet(workbook, pipelines);
+        AddDetectedStoredProceduresSheet(workbook, pipelines);
+        AddDetectedReferencesSheet(workbook, pipelines);
+
+        return workbook;
+    }
+
+    private static void AddValidationInventorySheet(XLWorkbook workbook, IReadOnlyList<AdfPipelineDetails> pipelines)
+    {
+        var sheet = workbook.Worksheets.Add("Validation Inventory");
+        WriteHeader(
+            sheet,
+            "Folder Name",
+            "Pipeline Name",
+            "Activity Name",
+            "Activity Type",
+            "Activity Status",
+            "Detected Stored Procedure",
+            "Detected SQL Text",
+            "Detected Source Dataset",
+            "Detected Sink Dataset",
+            "Detected Table Candidates",
+            "Suggested Validation Type",
+            "Suggested Validation Table",
+            "Review Status",
+            "Notes");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            foreach (var activity in pipeline.Activities)
+            {
+                var scripts = GetActivitySqlText(activity);
+                var storedProcedure = GetStoredProcedureName(activity);
+                var sourceDatasets = GetReferenceNames(activity.Inputs);
+                var sinkDatasets = GetReferenceNames(activity.Outputs);
+                var tableCandidates = DetectTableCandidates(scripts);
+
+                sheet.Cell(row, 1).Value = GetFolderName(pipeline);
+                sheet.Cell(row, 2).Value = pipeline.PipelineName;
+                sheet.Cell(row, 3).Value = activity.Name;
+                sheet.Cell(row, 4).Value = activity.Type;
+                sheet.Cell(row, 5).Value = activity.Status;
+                sheet.Cell(row, 6).Value = storedProcedure;
+                sheet.Cell(row, 7).Value = scripts;
+                sheet.Cell(row, 8).Value = string.Join(", ", sourceDatasets);
+                sheet.Cell(row, 9).Value = string.Join(", ", sinkDatasets);
+                sheet.Cell(row, 10).Value = string.Join(", ", tableCandidates);
+                sheet.Cell(row, 11).Value = GetSuggestedValidationType(activity, storedProcedure, scripts, sourceDatasets, sinkDatasets);
+                sheet.Cell(row, 12).Value = GetSuggestedValidationTable(tableCandidates, sinkDatasets, sourceDatasets);
+                sheet.Cell(row, 13).Value = GetReviewStatus(storedProcedure, scripts, tableCandidates, sourceDatasets, sinkDatasets);
+                sheet.Cell(row, 14).Value = GetInventoryNotes(activity, storedProcedure, scripts, tableCandidates);
+                row++;
+            }
+        }
+
+        FormatSheet(sheet);
+    }
+
+    private static void AddDetectedScriptsSheet(XLWorkbook workbook, IReadOnlyList<AdfPipelineDetails> pipelines)
+    {
+        var sheet = workbook.Worksheets.Add("Detected SQL Scripts");
+        WriteHeader(sheet, "Folder Name", "Pipeline Name", "Activity Name", "Activity Type", "Status", "SQL Text", "Detected Table Candidates");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            foreach (var activity in pipeline.Activities)
+            {
+                var sqlText = GetActivitySqlText(activity);
+                if (string.IsNullOrWhiteSpace(sqlText))
+                {
+                    continue;
+                }
+
+                sheet.Cell(row, 1).Value = GetFolderName(pipeline);
+                sheet.Cell(row, 2).Value = pipeline.PipelineName;
+                sheet.Cell(row, 3).Value = activity.Name;
+                sheet.Cell(row, 4).Value = activity.Type;
+                sheet.Cell(row, 5).Value = activity.Status;
+                sheet.Cell(row, 6).Value = sqlText;
+                sheet.Cell(row, 7).Value = string.Join(", ", DetectTableCandidates(sqlText));
+                row++;
+            }
+        }
+
+        FormatSheet(sheet);
+    }
+
+    private static void AddDetectedStoredProceduresSheet(XLWorkbook workbook, IReadOnlyList<AdfPipelineDetails> pipelines)
+    {
+        var sheet = workbook.Worksheets.Add("Stored Procedures");
+        WriteHeader(sheet, "Folder Name", "Pipeline Name", "Activity Name", "Activity Type", "Status", "Stored Procedure Name", "Review Status");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            foreach (var activity in pipeline.Activities)
+            {
+                var storedProcedure = GetStoredProcedureName(activity);
+                if (string.IsNullOrWhiteSpace(storedProcedure))
+                {
+                    continue;
+                }
+
+                sheet.Cell(row, 1).Value = GetFolderName(pipeline);
+                sheet.Cell(row, 2).Value = pipeline.PipelineName;
+                sheet.Cell(row, 3).Value = activity.Name;
+                sheet.Cell(row, 4).Value = activity.Type;
+                sheet.Cell(row, 5).Value = activity.Status;
+                sheet.Cell(row, 6).Value = storedProcedure;
+                sheet.Cell(row, 7).Value = "Needs Review";
+                row++;
+            }
+        }
+
+        FormatSheet(sheet);
+    }
+
+    private static void AddDetectedReferencesSheet(XLWorkbook workbook, IReadOnlyList<AdfPipelineDetails> pipelines)
+    {
+        var sheet = workbook.Worksheets.Add("Detected References");
+        WriteHeader(sheet, "Folder Name", "Pipeline Name", "Reference Name", "Reference Type", "Json Path", "Review Status");
+
+        var row = 2;
+        foreach (var pipeline in pipelines)
+        {
+            foreach (var reference in pipeline.ReferencedResources)
+            {
+                sheet.Cell(row, 1).Value = GetFolderName(pipeline);
+                sheet.Cell(row, 2).Value = pipeline.PipelineName;
+                sheet.Cell(row, 3).Value = reference.ReferenceName;
+                sheet.Cell(row, 4).Value = reference.ReferenceType;
+                sheet.Cell(row, 5).Value = reference.Path;
+                sheet.Cell(row, 6).Value = "Auto Detected";
+                row++;
+            }
+        }
+
+        FormatSheet(sheet);
     }
 
     private static void AddReportSummarySheet(
@@ -754,5 +928,157 @@ public sealed class AdfPipelineInfoFunction
     private static string GetFolderName(AdfPipelineDetails pipeline)
     {
         return pipeline.Pipeline.SelectToken("properties.folder.name")?.Value<string>() ?? "";
+    }
+
+    private static string GetStoredProcedureName(AdfActivitySummary activity)
+    {
+        return activity.TypeProperties?.SelectToken("storedProcedureName")?.Value<string>()
+            ?? activity.TypeProperties?.SelectToken("procedureName")?.Value<string>()
+            ?? "";
+    }
+
+    private static string GetActivitySqlText(AdfActivitySummary activity)
+    {
+        var scriptTexts = activity.Scripts?
+            .SelectTokens("$..text")
+            .Values<string>()
+            .Where(text => !string.IsNullOrWhiteSpace(text))
+            .ToArray()
+            ?? Array.Empty<string>();
+
+        if (scriptTexts.Length > 0)
+        {
+            return string.Join(Environment.NewLine + Environment.NewLine, scriptTexts);
+        }
+
+        return activity.TypeProperties?.SelectToken("script")?.Value<string>()
+            ?? activity.TypeProperties?.SelectToken("sqlReaderQuery")?.Value<string>()
+            ?? activity.TypeProperties?.SelectToken("query")?.Value<string>()
+            ?? "";
+    }
+
+    private static IReadOnlyList<string> GetReferenceNames(JToken? token)
+    {
+        return token?
+            .SelectTokens("$..referenceName")
+            .Values<string>()
+            .Select(value => value ?? "")
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray()
+            ?? Array.Empty<string>();
+    }
+
+    private static IReadOnlyList<string> DetectTableCandidates(string sqlText)
+    {
+        if (string.IsNullOrWhiteSpace(sqlText))
+        {
+            return Array.Empty<string>();
+        }
+
+        return SqlTableNameRegex
+            .Matches(sqlText)
+            .Select(match => match.Groups[1].Value.Trim('[', ']'))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string GetSuggestedValidationType(
+        AdfActivitySummary activity,
+        string storedProcedure,
+        string sqlText,
+        IReadOnlyList<string> sourceDatasets,
+        IReadOnlyList<string> sinkDatasets)
+    {
+        if (!string.IsNullOrWhiteSpace(storedProcedure))
+        {
+            return "Stored procedure output validation";
+        }
+
+        if (!string.IsNullOrWhiteSpace(sqlText))
+        {
+            return "SQL script result validation";
+        }
+
+        if (string.Equals(activity.Type, "Copy", StringComparison.OrdinalIgnoreCase)
+            || sourceDatasets.Count > 0
+            || sinkDatasets.Count > 0)
+        {
+            return "Source/sink dataset validation";
+        }
+
+        return "Manual review";
+    }
+
+    private static string GetSuggestedValidationTable(
+        IReadOnlyList<string> tableCandidates,
+        IReadOnlyList<string> sinkDatasets,
+        IReadOnlyList<string> sourceDatasets)
+    {
+        if (tableCandidates.Count > 0)
+        {
+            return tableCandidates[0];
+        }
+
+        if (sinkDatasets.Count > 0)
+        {
+            return sinkDatasets[0];
+        }
+
+        return sourceDatasets.Count > 0
+            ? sourceDatasets[0]
+            : "";
+    }
+
+    private static string GetReviewStatus(
+        string storedProcedure,
+        string sqlText,
+        IReadOnlyList<string> tableCandidates,
+        IReadOnlyList<string> sourceDatasets,
+        IReadOnlyList<string> sinkDatasets)
+    {
+        if (!string.IsNullOrWhiteSpace(storedProcedure))
+        {
+            return "Needs Review";
+        }
+
+        if (!string.IsNullOrWhiteSpace(sqlText) && tableCandidates.Count == 0)
+        {
+            return "Needs Review";
+        }
+
+        if (tableCandidates.Count > 0 || sourceDatasets.Count > 0 || sinkDatasets.Count > 0)
+        {
+            return "Auto Detected";
+        }
+
+        return "Cannot Detect";
+    }
+
+    private static string GetInventoryNotes(
+        AdfActivitySummary activity,
+        string storedProcedure,
+        string sqlText,
+        IReadOnlyList<string> tableCandidates)
+    {
+        if (!string.IsNullOrWhiteSpace(storedProcedure))
+        {
+            return "Stored procedure internals may touch additional tables. Review procedure definition before comparison.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(sqlText) && tableCandidates.Count == 0)
+        {
+            return "SQL text detected, but no table candidate was parsed. Review manually.";
+        }
+
+        if (string.Equals(activity.Type, "ExecutePipeline", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Child pipeline activity. Review child pipeline inventory as well.";
+        }
+
+        return "";
     }
 }

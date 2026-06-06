@@ -31,6 +31,11 @@ public sealed class WorkflowComparisonExcelFunction
         CancellationToken cancellationToken)
     {
         var request = await ReadRequestAsync(req, cancellationToken);
+        if (request.Tables.Count == 0)
+        {
+            request.Tables = (await LoadReviewedConfigAsync(request, cancellationToken)).ToList();
+        }
+
         var oldConnectionString = GetRequiredSetting("SqlAgentValidationConnectionString");
         var newConnectionString = GetRequiredSetting("AdfValidationConnectionString");
 
@@ -64,13 +69,16 @@ public sealed class WorkflowComparisonExcelFunction
     {
         var body = await req.ReadAsStringAsync();
         var request = string.IsNullOrWhiteSpace(body)
-            ? null
+            ? new WorkflowComparisonRequest()
             : JsonConvert.DeserializeObject<WorkflowComparisonRequest>(body);
 
-        if (request is null || request.Tables.Count == 0)
+        if (request is null)
         {
-            throw new InvalidOperationException("Request must include at least one table to compare.");
+            throw new InvalidOperationException("Invalid workflow comparison request.");
         }
+
+        request.Tables ??= new List<TableComparisonRequest>();
+        request.Parameters ??= new JObject();
 
         foreach (var table in request.Tables)
         {
@@ -90,6 +98,60 @@ public sealed class WorkflowComparisonExcelFunction
         }
 
         return request;
+    }
+
+    private async Task<IReadOnlyList<TableComparisonRequest>> LoadReviewedConfigAsync(
+        WorkflowComparisonRequest request,
+        CancellationToken cancellationToken)
+    {
+        var configConnectionString = GetRequiredSetting("SqlConnectionString");
+        var tables = new List<TableComparisonRequest>();
+
+        await using var conn = new SqlConnection(configConnectionString);
+        await conn.OpenAsync(cancellationToken);
+        await EnsureWorkflowComparisonConfigTableAsync(conn, cancellationToken);
+
+        await using var cmd = new SqlCommand(@"
+SELECT
+    TableName,
+    KeyColumnsJson,
+    CompareColumnsJson,
+    WhereClause,
+    ParametersJson
+FROM dbo.WorkflowComparisonConfig
+WHERE IsActive = 1
+  AND ReviewStatus = N'Reviewed'
+  AND (@WorkflowName = N'' OR WorkflowName = @WorkflowName)
+ORDER BY PipelineName, ActivityName, TableName;", conn);
+
+        cmd.Parameters.AddWithValue("@WorkflowName", request.WorkflowName ?? "");
+
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var parameters = ReadJsonObject(reader, "ParametersJson");
+            foreach (var parameter in request.Parameters.Properties())
+            {
+                parameters[parameter.Name] = parameter.Value;
+            }
+
+            tables.Add(new TableComparisonRequest
+            {
+                TableName = ReadString(reader, "TableName"),
+                KeyColumns = ReadJsonArray(reader, "KeyColumnsJson"),
+                CompareColumns = ReadJsonArray(reader, "CompareColumnsJson"),
+                WhereClause = ReadString(reader, "WhereClause"),
+                Parameters = parameters
+            });
+        }
+
+        if (tables.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "No reviewed active comparison config rows were found. Review dbo.WorkflowComparisonConfig and set ReviewStatus='Reviewed' and IsActive=1.");
+        }
+
+        return tables;
     }
 
     private async Task<TableComparisonResult> CompareTableAsync(
@@ -272,6 +334,48 @@ ORDER BY c.column_id;", conn);
         return columns;
     }
 
+    private static async Task EnsureWorkflowComparisonConfigTableAsync(
+        SqlConnection conn,
+        CancellationToken cancellationToken)
+    {
+        await using var cmd = new SqlCommand(@"
+IF OBJECT_ID(N'dbo.WorkflowComparisonConfig', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.WorkflowComparisonConfig
+    (
+        Id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_WorkflowComparisonConfig PRIMARY KEY,
+        WorkflowName NVARCHAR(200) NOT NULL,
+        FolderName NVARCHAR(512) NULL,
+        PipelineName NVARCHAR(256) NOT NULL,
+        ActivityName NVARCHAR(512) NULL,
+        ActivityType NVARCHAR(128) NULL,
+        ActivityStatus NVARCHAR(50) NULL,
+        DetectedStoredProcedure NVARCHAR(512) NULL,
+        DetectedSqlText NVARCHAR(MAX) NULL,
+        DetectedSourceDataset NVARCHAR(MAX) NULL,
+        DetectedSinkDataset NVARCHAR(MAX) NULL,
+        DetectedTableCandidates NVARCHAR(MAX) NULL,
+        SuggestedValidationType NVARCHAR(200) NULL,
+        SuggestedValidationTable NVARCHAR(512) NULL,
+        TableName NVARCHAR(512) NULL,
+        KeyColumnsJson NVARCHAR(MAX) NULL,
+        CompareColumnsJson NVARCHAR(MAX) NULL,
+        WhereClause NVARCHAR(MAX) NULL,
+        ParametersJson NVARCHAR(MAX) NULL,
+        ReviewStatus NVARCHAR(50) NOT NULL CONSTRAINT DF_WorkflowComparisonConfig_ReviewStatus DEFAULT N'Needs Review',
+        IsActive BIT NOT NULL CONSTRAINT DF_WorkflowComparisonConfig_IsActive DEFAULT 0,
+        Notes NVARCHAR(MAX) NULL,
+        CreatedAtUtc DATETIME2(3) NOT NULL CONSTRAINT DF_WorkflowComparisonConfig_CreatedAtUtc DEFAULT SYSUTCDATETIME(),
+        UpdatedAtUtc DATETIME2(3) NOT NULL CONSTRAINT DF_WorkflowComparisonConfig_UpdatedAtUtc DEFAULT SYSUTCDATETIME()
+    );
+
+    CREATE UNIQUE INDEX UX_WorkflowComparisonConfig_Activity
+        ON dbo.WorkflowComparisonConfig (WorkflowName, PipelineName, ActivityName);
+END", conn);
+
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static string BuildSelectSql(TableComparisonRequest table, IReadOnlyList<string> selectedColumns)
     {
         var columns = string.Join(", ", selectedColumns.Select(QuoteIdentifier));
@@ -283,6 +387,28 @@ ORDER BY c.column_id;", conn);
         }
 
         return sql;
+    }
+
+    private static string ReadString(SqlDataReader reader, string columnName)
+    {
+        var value = reader[columnName];
+        return value is null or DBNull ? "" : value.ToString() ?? "";
+    }
+
+    private static List<string> ReadJsonArray(SqlDataReader reader, string columnName)
+    {
+        var json = ReadString(reader, columnName);
+        return string.IsNullOrWhiteSpace(json)
+            ? new List<string>()
+            : JsonConvert.DeserializeObject<List<string>>(json) ?? new List<string>();
+    }
+
+    private static JObject ReadJsonObject(SqlDataReader reader, string columnName)
+    {
+        var json = ReadString(reader, columnName);
+        return string.IsNullOrWhiteSpace(json)
+            ? new JObject()
+            : JsonConvert.DeserializeObject<JObject>(json) ?? new JObject();
     }
 
     private static void AddParameters(SqlCommand cmd, JObject parameters)
@@ -544,6 +670,8 @@ ORDER BY c.column_id;", conn);
     private sealed class WorkflowComparisonRequest
     {
         public string WorkflowName { get; set; } = "";
+
+        public JObject Parameters { get; set; } = new();
 
         public List<TableComparisonRequest> Tables { get; set; } = new();
     }
