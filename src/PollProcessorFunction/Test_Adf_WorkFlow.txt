@@ -1,0 +1,134 @@
+Follow this order.
+
+1. Configure Connection Strings
+Set these app settings:
+
+AppResources:SqlConnectionString
+AppResources:SqlAgentValidationConnectionString
+AppResources:AdfValidationConnectionString
+Meaning:
+
+SqlConnectionString                = DB where config table will be created
+SqlAgentValidationConnectionString = old SQL Agent test DB
+AdfValidationConnectionString      = new ADF test DB
+2. Create/Populate Inventory Config Table
+Call:
+
+POST /api/adf/validation-inventory/sql
+This auto-creates:
+
+dbo.WorkflowComparisonConfig
+and fills it from ADF metadata.
+
+3. Review Config Table
+Run:
+
+SELECT *
+FROM dbo.WorkflowComparisonConfig
+ORDER BY PipelineName, ActivityName;
+Then update rows you want to compare.
+
+Example:
+
+UPDATE dbo.WorkflowComparisonConfig
+SET
+    TableName = 'dbo.Customer',
+    KeyColumnsJson = '["CustomerId"]',
+    CompareColumnsJson = '["Status","Amount","ModifiedDate"]',
+    WhereClause = 'BusinessDate = @BusinessDate',
+    ParametersJson = '{}',
+    ReviewStatus = 'Reviewed',
+    IsActive = 1
+WHERE PipelineName = 'YourPipeline'
+  AND ActivityName = 'YourActivity';
+Important:
+
+KeyColumnsJson must uniquely identify rows.
+CompareColumnsJson can be empty/null if you want all common non-key columns compared.
+WhereClause should pick the same consistent data scope in both DBs.
+4. Run Compare Endpoint
+Call:
+
+POST /api/workflow/compare/excel
+Body can now be simple:
+
+{
+  "workflowName": "YourPipeline",
+  "parameters": {
+    "BusinessDate": "2026-06-01"
+  }
+}
+This reads reviewed active rows from:
+
+dbo.WorkflowComparisonConfig
+Then compares:
+
+SQL Agent DB vs ADF DB
+and downloads Excel.
+
+5. Excel Output
+The comparison Excel includes:
+
+Summary
+Table Results
+Column Differences
+Missing In ADF
+Extra In ADF
+Request
+This tells you whether old workflow and new ADF workflow produced the same data.
+
+
+=====================================================
+
+
+Important
+For no-filter comparison, config rows should look like:
+
+UPDATE dbo.WorkflowComparisonConfig
+SET
+    TableName = 'dbo.Customer',
+    KeyColumnsJson = '["CustomerId"]',
+    CompareColumnsJson = '["Status","Amount","ModifiedDate"]',
+    WhereClause = NULL,
+    ParametersJson = '{}',
+    ReviewStatus = 'Reviewed',
+    IsActive = 1
+WHERE Id = 1;
+Then call:
+
+POST /api/workflow/compare/excel
+with:
+
+
+{}
+
+
+=================================================
+
+
+UPDATE dbo.WorkflowComparisonConfig
+SET
+    TableName = 'dbo.Customer',
+    KeyColumnsJson = '["CustomerId"]',
+    CompareColumnsJson = '["Status","Amount","ModifiedDate"]',
+    WhereClause = 'BusinessDate = @BusinessDate',
+    ParametersJson = '{}',
+    ReviewStatus = 'Reviewed',
+    IsActive = 1
+WHERE Id = 10;
+
+or 
+
+UPDATE dbo.WorkflowComparisonConfig
+SET
+    ReviewStatus = 'Reviewed',
+    IsActive = 1
+WHERE TableName IS NOT NULL
+  AND TableName <> ''
+  AND KeyColumnsJson IS NOT NULL
+  AND KeyColumnsJson <> ''
+  AND KeyColumnsJson <> '[]';
+
+
+
+
