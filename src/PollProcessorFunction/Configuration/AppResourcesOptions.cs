@@ -32,5 +32,9 @@ public sealed class AppResourcesOptions
     public string SqlAgentValidationConnectionString { get; init; } = "";
 
     public string AdfValidationConnectionString { get; init; } = "";
+
+    public string KeyVaultUri { get; init; } = "";
+
+    public string KeyVaultManagedIdentityClientId { get; init; } = "";
 }
 

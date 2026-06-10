@@ -55,4 +55,9 @@ Confirm the managed identity user exists and matches the identity attached to th
 
 ------------------------------------------
 
+new DefaultAzureCredential(new DefaultAzureCredentialOptions
+{
+    ManagedIdentityClientId = "<user-assigned-client-id>"
+});
+
 
