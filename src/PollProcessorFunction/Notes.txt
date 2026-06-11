@@ -60,4 +60,18 @@ new DefaultAzureCredential(new DefaultAzureCredentialOptions
     ManagedIdentityClientId = "<user-assigned-client-id>"
 });
 
+-------------------------
+
+
+{
+  "fileNames": [
+    "file1.txt",
+    "file2.csv",
+    "file3.xlsx"
+  ],
+  "sourcePath": "input/files",
+  "destinationPath": "output/zips",
+  "zipFileName": "my-files.zip"
+}
+
 

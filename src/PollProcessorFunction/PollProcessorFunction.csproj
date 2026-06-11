@@ -12,6 +12,7 @@
     <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" />
     <PackageReference Include="ClosedXML" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.OpenApi" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" OutputItemType="Analyzer" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask" />
