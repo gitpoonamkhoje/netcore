@@ -35,11 +35,12 @@ public sealed class AdfValidationInventorySqlFunction
         CancellationToken cancellationToken)
     {
         var pipelines = await _metadataService.GetAllPipelineDetailsAsync(cancellationToken);
-        var rows = BuildRows(pipelines);
 
         await using var conn = new SqlConnection(GetRequiredSetting("SqlConnectionString"));
         await conn.OpenAsync(cancellationToken);
         await EnsureTableAsync(conn, cancellationToken);
+
+        var rows = await BuildRowsAsync(conn, pipelines, cancellationToken);
 
         var inserted = 0;
         var updated = 0;
@@ -71,7 +72,10 @@ public sealed class AdfValidationInventorySqlFunction
         return response;
     }
 
-    private static IReadOnlyList<InventoryRow> BuildRows(IReadOnlyList<AdfPipelineDetails> pipelines)
+    private static async Task<IReadOnlyList<InventoryRow>> BuildRowsAsync(
+        SqlConnection conn,
+        IReadOnlyList<AdfPipelineDetails> pipelines,
+        CancellationToken cancellationToken)
     {
         var rows = new List<InventoryRow>();
         foreach (var pipeline in pipelines)
@@ -82,7 +86,11 @@ public sealed class AdfValidationInventorySqlFunction
                 var storedProcedure = GetStoredProcedureName(activity);
                 var sourceDatasets = GetReferenceNames(activity.Inputs);
                 var sinkDatasets = GetReferenceNames(activity.Outputs);
-                var tableCandidates = DetectTableCandidates(sqlText);
+                var tableCandidates = DetectTableCandidates(sqlText)
+                    .Concat(await GetStoredProcedureTableReferencesAsync(conn, storedProcedure, cancellationToken))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
 
                 rows.Add(new InventoryRow
                 {
@@ -311,6 +319,70 @@ WHERE WorkflowName = @WorkflowName
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private static async Task<IReadOnlyList<string>> GetStoredProcedureTableReferencesAsync(
+        SqlConnection conn,
+        string storedProcedure,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(storedProcedure))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            await using var cmd = new SqlCommand(@"
+SELECT DISTINCT
+    referenced_schema_name,
+    referenced_entity_name
+FROM sys.dm_sql_referenced_entities(@StoredProcedureName, 'OBJECT')
+WHERE referenced_entity_name IS NOT NULL
+  AND referenced_minor_name IS NULL
+  AND (referenced_class_desc IS NULL OR referenced_class_desc IN ('OBJECT_OR_COLUMN', 'OBJECT'))", conn);
+
+            cmd.Parameters.AddWithValue("@StoredProcedureName", NormalizeStoredProcedureName(storedProcedure));
+
+            var references = new List<string>();
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var schema = reader["referenced_schema_name"] as string;
+                var entity = reader["referenced_entity_name"] as string;
+                if (string.IsNullOrWhiteSpace(entity))
+                {
+                    continue;
+                }
+
+                references.Add(string.IsNullOrWhiteSpace(schema)
+                    ? entity
+                    : $"{schema}.{entity}");
+            }
+
+            return references
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch
+        {
+            // SQL Server cannot resolve dependencies for some procedures, especially dynamic SQL.
+            return Array.Empty<string>();
+        }
+    }
+
+    private static string NormalizeStoredProcedureName(string storedProcedure)
+    {
+        var normalized = storedProcedure
+            .Trim()
+            .Trim('[', ']')
+            .Replace("[", "")
+            .Replace("]", "");
+
+        return normalized.Contains('.', StringComparison.Ordinal)
+            ? normalized
+            : $"dbo.{normalized}";
     }
 
     private static string GetSuggestedValidationType(
