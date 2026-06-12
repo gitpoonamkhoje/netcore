@@ -29,6 +29,8 @@ public sealed class AppResourcesOptions
 
     public string AdfManagementApiVersion { get; init; } = "2018-06-01";
 
+    public string AdfTriggerUrl { get; init; } = "";
+
     public string SqlAgentValidationConnectionString { get; init; } = "";
 
     public string AdfValidationConnectionString { get; init; } = "";

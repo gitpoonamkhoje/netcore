@@ -1,13 +1,19 @@
 namespace PollProcessorFunction.Models;
 
-public sealed class PollOrchestrationResult
+public sealed class PipelineTriggerResult
 {
-    /// <summary>
-    /// All job names handed off for triggering during this orchestration run.
-    /// </summary>
-    public IReadOnlyList<string> JobsToTrigger { get; set; } = Array.Empty<string>();
-
     public IReadOnlyList<string> TriggeredPipelines { get; set; } = Array.Empty<string>();
 
     public IReadOnlyList<PipelineTriggerFailure> FailedTriggers { get; set; } = Array.Empty<PipelineTriggerFailure>();
+}
+
+public sealed class PipelineTriggerFailure
+{
+    public int Id { get; set; }
+
+    public string? JobName { get; set; }
+
+    public string? FileName { get; set; }
+
+    public string Reason { get; set; } = "";
 }

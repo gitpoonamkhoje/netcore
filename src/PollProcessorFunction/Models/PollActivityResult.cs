@@ -11,4 +11,9 @@ public sealed class PollActivityResult
     /// Job names ready to trigger (condition met); returned to the orchestrator while polling continues.
     /// </summary>
     public IReadOnlyList<string> JobsToTrigger { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Detailed ADF trigger payloads for ready items.
+    /// </summary>
+    public IReadOnlyList<PipelineTriggerItem> PipelineTriggers { get; set; } = Array.Empty<PipelineTriggerItem>();
 }

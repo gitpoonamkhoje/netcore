@@ -32,6 +32,8 @@ public static class PollOrchestrator
 
         DateTime stopTime = context.CurrentUtcDateTime.AddHours(input.PollForHours);
         var jobsToTrigger = new List<string>();
+        var triggeredPipelines = new List<string>();
+        var failedTriggers = new List<PipelineTriggerFailure>();
 
         while (context.CurrentUtcDateTime < stopTime)
         {
@@ -42,9 +44,25 @@ public static class PollOrchestrator
             if (pollResult.JobsToTrigger.Count > 0)
             {
                 jobsToTrigger.AddRange(pollResult.JobsToTrigger);
+                var triggerResult = await context.CallActivityAsync<PipelineTriggerResult>(
+                    "TriggerReadyJobsActivity",
+                    pollResult.PipelineTriggers);
+
+                if (triggerResult.TriggeredPipelines.Count > 0)
+                {
+                    triggeredPipelines.AddRange(triggerResult.TriggeredPipelines);
+                }
+
+                if (triggerResult.FailedTriggers.Count > 0)
+                {
+                    failedTriggers.AddRange(triggerResult.FailedTriggers);
+                }
+
                 context.SetCustomStatus(new PollOrchestrationResult
                 {
-                    JobsToTrigger = jobsToTrigger
+                    JobsToTrigger = jobsToTrigger,
+                    TriggeredPipelines = triggeredPipelines,
+                    FailedTriggers = failedTriggers
                 });
             }
 
@@ -62,7 +80,12 @@ public static class PollOrchestrator
             "FinalizeActivity",
             input);
 
-        return new PollOrchestrationResult { JobsToTrigger = jobsToTrigger };
+        return new PollOrchestrationResult
+        {
+            JobsToTrigger = jobsToTrigger,
+            TriggeredPipelines = triggeredPipelines,
+            FailedTriggers = failedTriggers
+        };
     }
 }
 

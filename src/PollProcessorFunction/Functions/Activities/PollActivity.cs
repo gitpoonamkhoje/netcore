@@ -54,6 +54,7 @@ public sealed class PollActivity
         var share = _resources.CreateFileShareClient();
         var slots = concurrency - active;
         var jobsToTrigger = new List<string>();
+        var pipelineTriggers = new List<PipelineTriggerItem>();
 
         foreach (var item in waiting.Take(slots))
         {
@@ -75,13 +76,20 @@ public sealed class PollActivity
             if (!string.IsNullOrWhiteSpace(jobName))
             {
                 jobsToTrigger.Add(jobName);
+                pipelineTriggers.Add(new PipelineTriggerItem
+                {
+                    Id = item.Id,
+                    JobName = jobName,
+                    FileName = item.FileName
+                });
             }
         }
 
         return new PollActivityResult
         {
             NoWaitingItems = false,
-            JobsToTrigger = jobsToTrigger
+            JobsToTrigger = jobsToTrigger,
+            PipelineTriggers = pipelineTriggers
         };
     }
 

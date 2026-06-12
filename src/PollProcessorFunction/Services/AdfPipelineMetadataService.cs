@@ -115,10 +115,7 @@ public sealed class AdfPipelineMetadataService : IAdfPipelineMetadataService
 
     private async Task<IReadOnlyList<JObject>> ListPipelinesAsync(CancellationToken cancellationToken)
     {
-        var json = await GetArmJsonAsync($"{FactoryPath}/pipelines", cancellationToken);
-        return json["value"] is JArray values
-            ? values.OfType<JObject>().ToArray()
-            : Array.Empty<JObject>();
+        return await GetArmPagedValuesAsync($"{FactoryPath}/pipelines", cancellationToken);
     }
 
     private async Task<JObject?> GetPipelineAsync(string pipelineName, CancellationToken cancellationToken)
@@ -135,25 +132,54 @@ public sealed class AdfPipelineMetadataService : IAdfPipelineMetadataService
 
     private async Task<IReadOnlyList<JObject>> ListTriggersAsync(CancellationToken cancellationToken)
     {
-        var json = await GetArmJsonAsync($"{FactoryPath}/triggers", cancellationToken);
-        return json["value"] is JArray values
-            ? values.OfType<JObject>().ToArray()
-            : Array.Empty<JObject>();
+        return await GetArmPagedValuesAsync($"{FactoryPath}/triggers", cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<JObject>> GetArmPagedValuesAsync(
+        string resourcePath,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<JObject>();
+        string? nextUrl = null;
+
+        do
+        {
+            var json = nextUrl is null
+                ? await GetArmJsonAsync(resourcePath, cancellationToken)
+                : await GetArmJsonByUrlAsync(nextUrl, cancellationToken);
+
+            if (json["value"] is JArray values)
+            {
+                results.AddRange(values.OfType<JObject>());
+            }
+
+            nextUrl = json.Value<string>("nextLink");
+        }
+        while (!string.IsNullOrWhiteSpace(nextUrl));
+
+        return results;
     }
 
     private async Task<JObject> GetArmJsonAsync(string resourcePath, CancellationToken cancellationToken)
+    {
+        var apiVersion = GetSetting("AdfManagementApiVersion")
+            ?? DefaultApiVersion;
+
+        return await GetArmJsonByUrlAsync(
+            $"https://management.azure.com{resourcePath}?api-version={Uri.EscapeDataString(apiVersion)}",
+            cancellationToken);
+    }
+
+    private async Task<JObject> GetArmJsonByUrlAsync(string requestUrl, CancellationToken cancellationToken)
     {
         var token = await _credential.GetTokenAsync(
             new TokenRequestContext(new[] { ArmScope }),
             cancellationToken);
 
-        var apiVersion = GetSetting("AdfManagementApiVersion")
-            ?? DefaultApiVersion;
-
         var client = _httpClientFactory.CreateClient(nameof(AdfPipelineMetadataService));
         using var request = new HttpRequestMessage(
             HttpMethod.Get,
-            $"https://management.azure.com{resourcePath}?api-version={Uri.EscapeDataString(apiVersion)}");
+            requestUrl);
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
 
