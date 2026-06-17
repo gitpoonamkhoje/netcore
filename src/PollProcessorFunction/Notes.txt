@@ -317,6 +317,107 @@ and generates a ready-to-use Excel inventory for migration analysis.
 
 --------------------------------------------------********-----------------------------
 
+Query 1 – Disabled SQL Agent Jobs
+USE msdb;
+GO
+
+SELECT
+    j.name AS JobName,
+    CASE
+        WHEN j.enabled = 1 THEN 'Enabled'
+        ELSE 'Disabled'
+    END AS JobStatus,
+    SUSER_SNAME(j.owner_sid) AS JobOwner,
+    j.date_created,
+    j.date_modified
+FROM dbo.sysjobs j
+WHERE j.enabled = 0
+ORDER BY j.name;
+
+Query 2 – Disabled Jobs with Schedule Information
+USE msdb;
+GO
+
+USE msdb;
+GO
+
+SELECT
+    j.name AS JobName,
+    j.enabled AS JobEnabled,
+    s.name AS ScheduleName,
+    s.enabled AS ScheduleEnabled
+FROM dbo.sysjobs j
+LEFT JOIN dbo.sysjobschedules js
+    ON j.job_id = js.job_id
+LEFT JOIN dbo.sysschedules s
+    ON js.schedule_id = s.schedule_id
+WHERE j.enabled = 0
+ORDER BY j.name;
+
+
+Query 3 – Complete Migration Inventory
+SELECT
+    j.name AS JobName,
+    CASE
+        WHEN j.enabled = 1 THEN 'Enabled'
+        ELSE 'Disabled'
+    END AS JobStatus,
+    c.name AS Category,
+    SUSER_SNAME(j.owner_sid) AS Owner,
+    j.date_created,
+    j.date_modified
+FROM msdb.dbo.sysjobs j
+LEFT JOIN msdb.dbo.syscategories c
+    ON j.category_id = c.category_id
+ORDER BY j.enabled,
+         j.name;
+
+Additional Useful Query – SQL Agent Job Steps
+USE msdb;
+GO
+
+SELECT
+    j.name AS JobName,
+    js.step_id,
+    js.step_name,
+    js.subsystem,
+    js.command
+FROM dbo.sysjobs j
+INNER JOIN dbo.sysjobsteps js
+    ON j.job_id = js.job_id
+ORDER BY j.name,
+         js.step_id;
+
+
+Additional Useful Query – Jobs Used by ADF Migration Assessment
+
+USE msdb;
+GO
+
+SELECT
+    j.name AS JobName,
+    CASE WHEN j.enabled = 1 THEN 'Enabled'
+         ELSE 'Disabled'
+    END AS Status,
+    c.name AS Category,
+    COUNT(js.step_id) AS StepCount,
+    MAX(h.run_date) AS LastRunDate
+FROM dbo.sysjobs j
+LEFT JOIN dbo.syscategories c
+    ON j.category_id = c.category_id
+LEFT JOIN dbo.sysjobsteps js
+    ON j.job_id = js.job_id
+LEFT JOIN dbo.sysjobhistory h
+    ON j.job_id = h.job_id
+    AND h.step_id = 0
+GROUP BY
+    j.name,
+    j.enabled,
+    c.name
+ORDER BY j.name;
+
+
+--------------------------------------
 
 
 
