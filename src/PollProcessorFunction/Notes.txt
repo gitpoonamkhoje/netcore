@@ -72,6 +72,251 @@ new DefaultAzureCredential(new DefaultAzureCredentialOptions
   "sourcePath": "input/files",
   "destinationPath": "output/zips",
   "zipFileName": "my-files.zip"
+
 }
+
+--------------------------------------------------------
+
+ADF VS SQL agent
+
+If you've already migrated SQL Agent jobs to ADF and want to compare SQL Agent jobs against ADF pipelines, a simple reconciliation approach is:
+
+Step 1: Extract Disabled SQL Agent Jobs
+SELECT
+    name AS SqlAgentJob
+FROM msdb.dbo.sysjobs
+WHERE enabled = 0
+ORDER BY name;
+
+Export this to Excel as SQLAgentJobs.xlsx.
+
+Step 2: Extract ADF Pipelines
+
+There are several ways:
+
+Option A: From Azure Portal
+Open ADF Studio
+Author → Pipelines
+Export list manually
+Option B: Using PowerShell
+Get-AzDataFactoryV2Pipeline `
+    -ResourceGroupName "RGName" `
+    -DataFactoryName "ADFName" |
+Select-Object Name |
+Export-Csv ADFPipelines.csv -NoTypeInformation
+Step 3: Match in Excel
+
+Assume:
+
+Sheet1 (SQL Jobs)
+
+A
+JobName
+
+Sheet2 (ADF Pipelines)
+
+A
+PipelineName
+
+Use:
+
+=XLOOKUP(A2,ADF!A:A,ADF!A:A,"Not Found")
+
+or
+
+=IF(COUNTIF(ADF!A:A,A2)>0,"Migrated","Missing")
+
+Result:
+
+SQL Job	Status
+Customer_Load	Migrated
+Invoice_Export	Missing
+Step 4: Better Approach (Recommended)
+
+Create a migration inventory table:
+
+SQL Agent Job	Status	ADF Pipeline	Trigger	Remarks
+Job_A	Disabled	PL_Job_A	Daily	Migrated
+Job_B	Disabled	PL_Job_B	Hourly	Migrated
+Job_C	Disabled	NULL	NULL	Not Migrated
+
+Then use SQL:
+
+SELECT
+    j.name AS SqlAgentJob,
+    CASE
+        WHEN m.AdfPipeline IS NULL THEN 'Not Migrated'
+        ELSE 'Migrated'
+    END AS MigrationStatus,
+    m.AdfPipeline
+FROM msdb.dbo.sysjobs j
+LEFT JOIN MigrationMapping m
+    ON j.name = m.SqlAgentJob
+WHERE j.enabled = 0;
+
+This is usually the cleanest approach for migration audits because job names and pipeline names often differ (e.g., WTC_Customer_Load vs PL_Customer_Load).
+
+If your ADF pipelines follow a naming convention derived from the SQL Agent job names, I can also give you a query that automatically compares them using exported ADF metadata and highlights:
+
+Disabled & migrated
+Disabled but not migrated
+Migrated but SQL Agent still enabled
+Duplicate migrations
+
+which is typically what auditors and migration teams need.
+
+=============================================PIPELINE======================================***
+
+
+1. Find All Azure Function Calls
+
+Search the ARM export folder:
+
+Get-ChildItem -Recurse *.json |
+Select-String '"type": "AzureFunctionActivity"'
+
+or
+
+Get-ChildItem -Recurse *.json |
+Select-String "AzureFunction"
+
+Typical output:
+
+{
+  "name": "ExecuteTabDump",
+  "type": "AzureFunctionActivity",
+  "typeProperties": {
+    "functionName": "TabDumpFunction"
+  }
+}
+2. Find Stored Procedures Called by ADF
+
+Search:
+
+Get-ChildItem -Recurse *.json |
+Select-String "storedProcedureName"
+
+Example:
+
+{
+  "type": "SqlServerStoredProcedure",
+  "typeProperties": {
+      "storedProcedureName": "dbo.sp_wtc_tabdump"
+  }
+}
+
+or
+
+{
+  "storedProcedureName": "[dbo].[sp_LoadCustomer]"
+}
+3. Find SQL Scripts Executed by ADF
+
+Many migrations replaced Stored Procedure activity with Script activity.
+
+Search:
+
+Get-ChildItem -Recurse *.json |
+Select-String '"type": "Script"'
+
+or
+
+Get-ChildItem -Recurse *.json |
+Select-String "EXEC "
+
+Example:
+
+EXEC dbo.sp_wtc_tabload
+
+or
+
+EXEC dbo.sp_ProcessCustomerData
+4. Find All References to a Particular Stored Procedure
+
+For example:
+
+Get-ChildItem -Recurse *.json |
+Select-String "sp_wtc_tabload"
+
+This will tell you:
+
+Pipeline	Activity
+PL_TabLoad	Script1
+PL_DailyLoad	ExecuteSP
+PL_Customer	ScriptActivity
+5. Extract Complete Inventory
+
+Run:
+
+$Results = @()
+
+Get-ChildItem -Recurse *.json | ForEach-Object {
+
+    $json = Get-Content $_.FullName -Raw
+
+    if($json -match "AzureFunction")
+    {
+        $Results += [PSCustomObject]@{
+            File = $_.Name
+            Type = "Azure Function"
+        }
+    }
+
+    if($json -match "storedProcedureName")
+    {
+        $Results += [PSCustomObject]@{
+            File = $_.Name
+            Type = "Stored Procedure"
+        }
+    }
+
+    if($json -match '"type": "Script"')
+    {
+        $Results += [PSCustomObject]@{
+            File = $_.Name
+            Type = "Script Activity"
+        }
+    }
+}
+
+$Results | Export-Csv ADFInventory.csv -NoTypeInformation
+6. If Your Goal is SQL Agent → ADF Migration Validation
+
+Create a reconciliation sheet:
+
+SQL Agent Job	Stored Proc	ADF Pipeline	Activity Type
+JOB_TABLOAD	sp_wtc_tabload	PL_TabLoad	Azure Function
+JOB_TABDUMP	sp_wtc_tabdump	PL_TabDump	Azure Function
+JOB_CUSTOMER	sp_LoadCustomer	PL_Customer	Stored Procedure
+JOB_EXPORT	sp_ExportData	PL_Export	Script
+
+This quickly shows:
+
+Which SQL Agent jobs were migrated.
+Which still call SQL stored procedures.
+Which were converted to Azure Functions.
+Which use Script Activities.
+Even Easier
+
+If you provide:
+
+A sample pipeline JSON file, or
+The exported ARM zip structure,
+
+I can give you a PowerShell script that extracts:
+
+Pipeline Name
+Activity Name
+Activity Type
+Azure Function Name
+Stored Procedure Name
+Script Text
+Linked Service
+
+and generates a ready-to-use Excel inventory for migration analysis.
+
+--------------------------------------------------********-----------------------------
+
+
 
 
