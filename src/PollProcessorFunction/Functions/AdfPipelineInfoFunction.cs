@@ -770,13 +770,14 @@ public sealed class AdfPipelineInfoFunction
     private static void AddPipelinesSheet(XLWorkbook workbook, IReadOnlyList<AdfPipelineDetails> pipelines)
     {
         var sheet = workbook.Worksheets.Add("Pipelines");
-        WriteHeader(sheet, "Pipeline Name", "Pipeline Json");
+        WriteHeader(sheet, "Pipeline Name", "Activity Count", "Pipeline Json");
 
         var row = 2;
         foreach (var pipeline in pipelines)
         {
             sheet.Cell(row, 1).Value = pipeline.PipelineName;
-            sheet.Cell(row, 2).Value = ToJson(pipeline.Pipeline);
+            sheet.Cell(row, 2).Value = pipeline.Activities.Count;
+            sheet.Cell(row, 3).Value = ToJson(pipeline.Pipeline);
             row++;
         }
 
