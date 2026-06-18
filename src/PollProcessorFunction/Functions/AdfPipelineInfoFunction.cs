@@ -34,13 +34,31 @@ public sealed class AdfPipelineInfoFunction
         CancellationToken cancellationToken)
     {
         var pipelines = await _metadataService.GetAllPipelineDetailsAsync(cancellationToken);
+        var filter = GetQueryValue(req, "filter");
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await WriteJsonAsync(response, new
+        if (!string.IsNullOrWhiteSpace(filter))
+        {
+            pipelines = pipelines
+                .Where(pipeline => JsonConvert
+                    .SerializeObject(pipeline)
+                    .Contains(filter, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+        }
+
+        var result = new
         {
             Count = pipelines.Count,
+            Filter = filter ?? "",
             Pipelines = pipelines
-        }, cancellationToken);
+        };
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        if (IsDownloadRequested(req))
+        {
+            response.Headers.Add("Content-Disposition", "attachment; filename=\"adf-pipeline-info.json\"");
+        }
+
+        await WriteJsonAsync(response, result, cancellationToken);
 
         return response;
     }
@@ -197,6 +215,39 @@ public sealed class AdfPipelineInfoFunction
         await response.WriteStringAsync(
             JsonConvert.SerializeObject(value, Formatting.Indented),
             cancellationToken);
+    }
+
+    private static bool IsDownloadRequested(HttpRequestData req)
+    {
+        var download = GetQueryValue(req, "download");
+        return string.Equals(download, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(download, "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(download, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? GetQueryValue(HttpRequestData req, string name)
+    {
+        var query = req.Url.Query;
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return null;
+        }
+
+        foreach (var part in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var pieces = part.Split('=', 2);
+            var key = Uri.UnescapeDataString(pieces[0].Replace("+", " "));
+            if (!string.Equals(key, name, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return pieces.Length == 1
+                ? ""
+                : Uri.UnescapeDataString(pieces[1].Replace("+", " "));
+        }
+
+        return null;
     }
 
     private static XLWorkbook BuildWorkbook(IReadOnlyList<AdfPipelineDetails> pipelines)

@@ -420,4 +420,378 @@ ORDER BY j.name;
 --------------------------------------
 
 
+GET /api/adf/pipelines/info
+
+Normal JSON response.
+
+GET /api/adf/pipelines/info?download=true
+
+Downloads JSON as adf-pipeline-info.json.
+
+GET /api/adf/pipelines/info?filter=storedProcedure
+
+Returns only pipelines where the full JSON/details contain storedProcedure.
+
+GET /api/adf/pipelines/info?filter=MyTable&download=true
+
+Filters and downloads the filtered JSON.
+GET /api/adf/pipelines/info?filter=mail
+
+GET /api/adf/pipelines/info?filter=email
+
+GET /api/adf/pipelines/info?filter=storedProcedure
+
+GET /api/adf/pipelines/info?filter=usp_SendMail
+
+GET /api/adf/pipelines/info?filter=sqlReaderStoredProcedureName&download=true
+>>>
+
+SQL Agent job logic manually commented inside ADF SQL/script This is not the same as ADF inactive. It means the activity may still be Active, but inside SQL text something is commented using -- or /* */.
+
+Use filters like:
+
+GET /api/adf/pipelines/info?filter=--&download=true
+
+GET /api/adf/pipelines/info?filter=/*&download=true
+
+GET /api/adf/pipelines/info?filter=sp_send_dbmail&download=true
+
+GET /api/adf/pipelines/info?filter=mail&download=true
+
+---
+SQL Agent jobs activity commented or not >>
+Run this on the old SQL Server where SQL Agent jobs exist:
+
+USE msdb;
+GO
+
+SELECT
+    j.name AS JobName,
+    s.step_id AS StepId,
+    s.step_name AS StepName,
+    s.subsystem AS StepType,
+    s.database_name AS DatabaseName,
+    s.command AS StepCommand
+FROM dbo.sysjobs j
+INNER JOIN dbo.sysjobsteps s
+    ON j.job_id = s.job_id
+WHERE
+    s.command LIKE '%--%'
+    OR s.command LIKE '%/*%'
+    OR s.command LIKE '%*/%'
+ORDER BY
+    j.name,
+    s.step_id;
+
+This finds SQL Agent job steps where code may be commented using -- or /* ... */.
+
+To specifically find mail-related commented logic:
+
+USE msdb;
+GO
+
+SELECT
+    j.name AS JobName,
+    s.step_id AS StepId,
+    s.step_name AS StepName,
+    s.database_name AS DatabaseName,
+    s.command AS StepCommand
+FROM dbo.sysjobs j
+INNER JOIN dbo.sysjobsteps s
+    ON j.job_id = s.job_id
+WHERE
+    (
+        s.command LIKE '%--%mail%'
+        OR s.command LIKE '%/*%mail%'
+        OR s.command LIKE '%sp_send_dbmail%'
+        OR s.command LIKE '%sendmail%'
+        OR s.command LIKE '%email%'
+    )
+ORDER BY
+    j.name,
+    s.step_id;
+
+But the commented code may be inside that stored procedure, not inside the job step. For that, run this in the application database:
+
+SELECT
+    SCHEMA_NAME(o.schema_id) AS SchemaName,
+    o.name AS ProcedureName,
+    m.definition
+FROM sys.sql_modules m
+INNER JOIN sys.objects o
+    ON m.object_id = o.object_id
+WHERE
+    o.type IN ('P', 'V', 'FN', 'IF', 'TF')
+    AND (
+        m.definition LIKE '%--%'
+        OR m.definition LIKE '%/*%'
+        OR m.definition LIKE '%sp_send_dbmail%'
+        OR m.definition LIKE '%mail%'
+        OR m.definition LIKE '%email%'
+    )
+ORDER BY
+    SchemaName,
+    ProcedureName;
+
+
+*) Yes, you can search commented code inside SQL Agent job steps across all job step types because SQL Agent stores the step script in:
+
+USE msdb;
+GO
+
+SELECT
+    j.name AS JobName,
+    s.step_id AS StepId,
+    s.step_name AS StepName,
+    s.subsystem AS StepType,
+    s.database_name AS DatabaseName,
+    CASE
+        WHEN s.command LIKE '%--%' THEN 'TSQL single-line comment'
+        WHEN s.command LIKE '%/*%' OR s.command LIKE '%*/%' THEN 'TSQL block comment'
+        WHEN s.command LIKE '%#%' THEN 'PowerShell comment'
+        WHEN s.command LIKE '%<#%' OR s.command LIKE '%#>%' THEN 'PowerShell block comment'
+        WHEN s.command LIKE '%REM %' THEN 'CMD REM comment'
+        WHEN s.command LIKE '%::%' THEN 'CMD :: comment'
+        ELSE 'Possible comment'
+    END AS CommentType,
+    s.command AS StepCommand
+FROM dbo.sysjobs j
+INNER JOIN dbo.sysjobsteps s
+    ON j.job_id = s.job_id
+WHERE
+    s.command LIKE '%--%'
+    OR s.command LIKE '%/*%'
+    OR s.command LIKE '%*/%'
+    OR s.command LIKE '%#%'
+    OR s.command LIKE '%<#%'
+    OR s.command LIKE '%#>%'
+    OR s.command LIKE '%REM %'
+    OR s.command LIKE '%::%'
+ORDER BY
+    j.name,
+    s.step_id;
+
+-----------------------------------------
+*) Get All SQQL AGENT details to be found by scipt >>
+
+Yes. You can extract scripts for all SQL Agent job step types from msdb.dbo.sysjobsteps.
+
+Use this:
+USE msdb;
+GO
+
+SELECT
+    j.name AS JobName,
+    s.step_id AS StepId,
+    s.step_name AS StepName,
+    s.subsystem AS StepType,
+    s.database_name AS DatabaseName,
+    s.command AS StepScript,
+    CASE
+        WHEN s.subsystem = 'TSQL' THEN 'SQL Script / Stored Procedure / SQL Command'
+        WHEN s.subsystem = 'PowerShell' THEN 'PowerShell Script'
+        WHEN s.subsystem = 'CmdExec' THEN 'Command Line / Batch Script'
+        WHEN s.subsystem = 'SSIS' THEN 'SSIS Package Execution'
+        WHEN s.subsystem = 'ActiveScripting' THEN 'ActiveX Script'
+        WHEN s.subsystem = 'ANALYSISCOMMAND' THEN 'SSAS Command'
+        WHEN s.subsystem = 'ANALYSISQUERY' THEN 'SSAS Query'
+        WHEN s.subsystem = 'Replication Distributor' THEN 'Replication Distributor'
+        WHEN s.subsystem = 'Replication Merge' THEN 'Replication Merge'
+        WHEN s.subsystem = 'Replication QueueReader' THEN 'Replication Queue Reader'
+        WHEN s.subsystem = 'Replication Snapshot' THEN 'Replication Snapshot'
+        WHEN s.subsystem = 'Replication Transaction-Log Reader' THEN 'Replication Log Reader'
+        ELSE s.subsystem
+    END AS StepTypeDescription
+FROM dbo.sysjobs j
+INNER JOIN dbo.sysjobsteps s
+    ON j.job_id = s.job_id
+ORDER BY
+    j.name,
+    s.step_id;
+
+
+This gives you:
+
+Job name
+Step name
+Step type
+Database name
+Full script/command used inside the step
+
+*) To summarize which types are used:
+
+USE msdb;
+GO
+
+SELECT
+    s.subsystem AS StepType,
+    COUNT(*) AS StepCount
+FROM dbo.sysjobsteps s
+GROUP BY
+    s.subsystem
+ORDER BY
+    StepCount DESC;
+
+*) To find procedures used inside T-SQL job steps:
+USE msdb;
+GO
+
+SELECT
+    j.name AS JobName,
+    s.step_id AS StepId,
+    s.step_name AS StepName,
+    s.database_name AS DatabaseName,
+    s.command AS StepScript
+FROM dbo.sysjobs j
+INNER JOIN dbo.sysjobsteps s
+    ON j.job_id = s.job_id
+WHERE
+    s.subsystem = 'TSQL'
+    AND (
+        s.command LIKE '%EXEC %'
+        OR s.command LIKE '%EXECUTE %'
+        OR s.command LIKE '%.usp_%'
+        OR s.command LIKE '%sp_%'
+    )
+ORDER BY
+    j.name,
+    s.step_id;
+
+--------------------------------------
+
+*) Find job name with respective peipline name >>
+LOWER(REPLACE(REPLACE(REPLACE(Name, 'pl_', ''), '_', ''), '-', ''))
+
+
+USE msdb;
+GO
+
+WITH SqlAgentJobs AS
+(
+    SELECT
+        j.name AS JobName,
+        LOWER(
+            REPLACE(
+                REPLACE(
+                    CASE
+                        WHEN LOWER(LEFT(j.name, 3)) = 'pl_' THEN SUBSTRING(j.name, 4, LEN(j.name))
+                        ELSE j.name
+                    END,
+                    '_', ''
+                ),
+                '-', ''
+            )
+        ) AS JobMatchKey
+    FROM dbo.sysjobs j
+),
+AdfPipelines AS
+(
+    SELECT DISTINCT
+        ObjectName AS PipelineName,
+        LOWER(
+            REPLACE(
+                REPLACE(
+                    CASE
+                        WHEN LOWER(LEFT(ObjectName, 3)) = 'pl_' THEN SUBSTRING(ObjectName, 4, LEN(ObjectName))
+                        ELSE ObjectName
+                    END,
+                    '_', ''
+                ),
+                '-', ''
+            )
+        ) AS PipelineMatchKey
+    FROM YourDatabase.dbo.AdfPipelineInfoResult
+    WHERE ObjectType = 'Pipeline'
+)
+SELECT
+    j.JobName,
+    p.PipelineName,
+    CASE
+        WHEN p.PipelineName IS NULL THEN 'Not Found In ADF'
+        ELSE 'Matched'
+    END AS MatchStatus
+FROM SqlAgentJobs j
+LEFT JOIN AdfPipelines p
+    ON j.JobMatchKey = p.PipelineMatchKey
+ORDER BY
+    MatchStatus,
+    j.JobName;
+
+*) IN EXCEL how do you do it >>
+Then create the same helper column for both:
+
+If the pipeline/job name is in cell A2, use:
+
+=LOWER(SUBSTITUTE(SUBSTITUTE(IF(LEFT(LOWER(A2),3)="pl_",MID(A2,4,LEN(A2)),A2),"_",""),"-",""))
+Then create the same helper column for both:
+SQL Agent Job Name
+ADF Pipeline Name
+After that, match using XLOOKUP:
+=XLOOKUP(B2, AdfPipelineMatchKeyColumn, AdfPipelineNameColumn, "Not Found")
+Where B2 is the normalized SQL Agent job name key.
+
+*) If you want to check ODREXT reated peipline >>
+
+If you want only ADF pipeline names containing odrext, use: AND ObjectName LIKE '%odrext%'
+
+USE msdb;
+GO
+
+WITH SqlAgentJobs AS
+(
+    SELECT
+        j.name AS JobName,
+        LOWER(
+            REPLACE(
+                REPLACE(
+                    CASE
+                        WHEN LOWER(LEFT(j.name, 3)) = 'pl_' THEN SUBSTRING(j.name, 4, LEN(j.name))
+                        ELSE j.name
+                    END,
+                    '_', ''
+                ),
+                '-', ''
+            )
+        ) AS JobMatchKey
+    FROM dbo.sysjobs j
+),
+AdfPipelines AS
+(
+    SELECT DISTINCT
+        ObjectName AS PipelineName,
+        LOWER(
+            REPLACE(
+                REPLACE(
+                    CASE
+                        WHEN LOWER(LEFT(ObjectName, 3)) = 'pl_' THEN SUBSTRING(ObjectName, 4, LEN(ObjectName))
+                        ELSE ObjectName
+                    END,
+                    '_', ''
+                ),
+                '-', ''
+            )
+        ) AS PipelineMatchKey
+    FROM YourDatabase.dbo.AdfPipelineInfoResult
+    WHERE ObjectType = 'Pipeline'
+      AND ObjectName LIKE '%odrext%'
+)
+SELECT
+    j.JobName,
+    p.PipelineName,
+    CASE
+        WHEN p.PipelineName IS NULL THEN 'Not Found In ADF'
+        ELSE 'Matched'
+    END AS MatchStatus
+FROM SqlAgentJobs j
+LEFT JOIN AdfPipelines p
+    ON j.JobMatchKey = p.PipelineMatchKey
+ORDER BY
+    MatchStatus,
+    j.JobName;
+
+
+
+
+
+
 
