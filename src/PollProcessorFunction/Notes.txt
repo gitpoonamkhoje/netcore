@@ -789,6 +789,127 @@ ORDER BY
     MatchStatus,
     j.JobName;
 
+-----------------------------------------------------------------------------
+
+New endpoint
+POST /api/tabload
+
+What it does (mapped from old SQL proc)
+Old sp_wtc_tabload behavior	New Azure Function
+Read flat file from FTP/share path
+Reads from Azure File Share (FtpSharePath + optional subpath)
+Read .fmt format file from DDL share
+Reads {DdlSharePath}/{table}.fmt and parses it
+BULK INSERT with format file
+Parses file + SqlBulkCopy into SQL table
+Delimited load when no .fmt
+Uses Delimiter (default ~)
+Zip file support
+Extracts .zip before load
+Backup table (@bk_tb=Y)
+SELECT * INTO TabLoadBackup_{guid}
+Restore on failure
+TRUNCATE + INSERT from backup
+DDL .sql script
+Executes {table}.sql from DDL path if present
+Index .idx script
+Executes {table}.idx if present
+Flat file date check (@ff_dc)
+Checks file LastModified is today (UTC)
+Poll process update (@ch_pr=Y)
+Updates poll_process to C / F
+
+
+Example request:
+POST /api/tabload
+{
+  "tableName": "MyDb.dbo.VSTT_ACCT",
+  "backupTable": "Y",
+  "childProcess": "Y",
+  "flatFileDateCheck": "Y",
+  "delimiter": "~",
+  "zipped": "N",
+  "ftpPath": "MSSQLSERVER",
+  "appId": "MYAPP",
+  "alternateName": "N",
+  "executeDdlScript": true,
+  "executeIndexScript": true
+}
+
+
+File share layout expected
+For table VSTT_ACCT:
+
+Data: ftp/MSSQLSERVER/VSTT_ACCT.txt (or .zip)
+Format: ddl/VSTT_ACCT.fmt
+DDL (optional): ddl/VSTT_ACCT.sql
+Index (optional): ddl/VSTT_ACCT.idx
+Paths are configurable in AppResources:
+
+FtpSharePath
+DdlSharePath
+BackupSharePath
+UnzipSharePath
+Project structure >>
+
+src/TabLoadFunction/
+  Functions/TabLoadHttpFunction.cs
+  Services/TabLoadService.cs
+  Services/FileShareReader.cs
+  Services/SqlBulkFormatFileParser.cs
+  Configuration/...
+  appsettings.*.json
+  local.settings.json.template
+
+Not included yet (from old 2500-line proc) >>
+These can be added next if you want:
+
+DBATASKS.dbo.JobLoadLog step-by-step logging
+Email on failure (sp_send_dbmail)
+Rename source file to .old / .bad
+Progress bar (Jobloadlog_PBRun)
+.gz unzip support
+
+
+*) EXEC sp_wtc_tabload
+    @tb_nm = 'vstt_acct',
+    @bk_tb = 'N',
+    @ff_dc = 'N',
+    @zipped = 'Y',
+    @altname = 'vsttacct'
+
+
+
+What the new Azure Function currently supports
+The new TabLoadRequest covers the main load parameters, not all 18:
+
+Supported in Function	Maps to
+TableName
+@tb_nm
+BackupTable
+@bk_tb
+ChildProcess
+@ch_pr
+LoadFailureOverride
+@lfo
+FlatFileDateCheck
+@ff_dc
+Delimiter
+@delim
+Zipped
+@zipped
+AlternateName
+@altname
+FtpPath
+@ftp_path
+AppId
+@app_id
+MaxErrors
+@lfo_max (defined, not fully used yet)
+ExecuteDdlScript
+DDL .sql execution
+ExecuteIndexScript
+.idx execution
 
 
 
