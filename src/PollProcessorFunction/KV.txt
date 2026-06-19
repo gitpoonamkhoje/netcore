@@ -1,0 +1,203 @@
+
+
+StorageAccountName
+FileShareName
+DataFactoryName
+DataFactoryResourceGroupName
+DataFactorySubscriptionId
+
+
+StorageAccountName
+FileShareName
+DataFactoryName
+DataFactoryResourceGroupName
+DataFactorySubscriptionId
+
+----------------------------------------
+Environment variable
+
+AZURE_FUNCTIONS_ENVIRONMENT=Development
+
+AppResources__KeyVaultUri=
+https://kv-ods-dev.vault.azure.net/
+
+
+*)AZURE_FUNCTIONS_ENVIRONMENT=Production
+
+*)
+| Environment | StorageAccountName |
+| ----------- | ------------------ |
+| Dev         | `devstorage`       |
+| UAT         | `uatstorage`       |
+| Prod        | `prodstorage`      |
+
+AppResources__FileShareName=dev-share
+AppResources__StorageAccountName=devstorage
+
+---------------------------------------------
+KEY VAULT 
+
+DEV
+AppResources__FileShareName=dev-share
+AppResources__StorageAccountName=devstorage
+AppResources__KeyVaultUri=https://kv-ods-dev.vault.azure.net/
+CERT
+AppResources__FileShareName=cert-share
+AppResources__StorageAccountName=certstorage
+AppResources__KeyVaultUri=https://kv-ods-cert.vault.azure.net/
+PROD
+AppResources__FileShareName=prod-share
+AppResources__StorageAccountName=prodstorage
+AppResources__KeyVaultUri=https://kv-ods-prod.vault.azure.net/
+
+
+DEV Vault
+kv-ods-dev
+
+Secrets:
+
+AppResources--SqlConnectionString
+AppResources--AzureWebJobsStorage
+AppResources--AdfValidationConnectionString
+AppResources--SqlAgentValidationConnectionString
+
+OR
+
+Dev--AppResources--SqlConnectionString
+Dev--AppResources--AzureWebJobsStorage
+
+Cert--AppResources--SqlConnectionString
+Cert--AppResources--AzureWebJobsStorage
+
+Prod--AppResources--SqlConnectionString
+Prod--AppResources--AzureWebJobsStorage 
+
+-------------------------------------
+
+*) Single secret approach 
+Option 2 (Single Vault, Manual Secret Lookup)
+
+Store:
+
+Dev--AppResources--SqlConnectionString
+Cert--AppResources--SqlConnectionString
+Prod--AppResources--SqlConnectionString
+
+Then add:
+
+EnvironmentName=Dev
+
+in Function App settings.
+
+And read manually:
+
+var env = configuration["EnvironmentName"];
+
+var secretName = $"{env}--AppResources--SqlConnectionString";
+
+var secret = await secretClient.GetSecretAsync(secretName);
+
+In this model:
+
+AppResources__FileShareName=dev-share
+EnvironmentName=Dev
+
+-------------------------------------------------
+
+Final by cursor >>
+
+
+How Option 2 works
+Key Vault secrets (one vault):
+
+Dev--AppResources--SqlConnectionString
+Cert--AppResources--SqlConnectionString
+Prod--AppResources--SqlConnectionString
+same pattern for other keys
+
+Function App settings (per app):
+KeyVaultUri=https://your-vault.vault.azure.net/
+AppEnvironmentCode=Dev (or Cert / Prod)
+ASPNETCORE_ENVIRONMENT=Development (or Certification / Production)
+Important: use AppEnvironmentCode, not EnvironmentName, because EnvironmentName is already used by ASP.NET/Functions for hosting (Development, Certification, Production).
+
+--------------------------------------------
+
+
+Azure Portal settings (per Function App)
+For each Function App (Dev / Cert / Prod), set these:
+
+Setting	Dev example	Cert example	Prod example
+ASPNETCORE_ENVIRONMENT
+Development
+Certification
+Production
+
+AppEnvironmentCode
+Dev
+Cert
+Prod
+
+KeyVaultUri
+https://your-vault.vault.azure.net/
+same vault
+same vault
+
+In appsetting >>
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "AZURE_FUNCTIONS_ENVIRONMENT": "Development",
+
+    "AppResources__SqlConnectionString": "Server=.;Database=devdb;Integrated Security=true;TrustServerCertificate=true;",
+    "AppResources__AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "AppResources__StorageAccountName": "devstorage",
+    "AppResources__FileShareName": "dev-share",
+    "AppResources__AppEnvironmentCode": "Dev"
+  }
+}
+
+2. Test appsettings-only (no Key Vault)
+Leave:
+
+"AppResources__KeyVaultUri": ""
+
+---------------------------------------
+Keep in env-specific appsettings files
+Use appsettings.Development.json, appsettings.Certification.json, appsettings.Production.json for non-secret, environment-specific defaults:
+
+AppEnvironmentCode (Dev, Cert, Prod)
+DataFactoryName
+DataFactoryResourceGroupName
+DataFactorySubscriptionId
+FileShareName
+StorageAccountName
+AdfTriggerUrl
+empty placeholders for secrets
+
+Example in appsettings.Development.json:
+"AppEnvironmentCode": "Dev",
+"KeyVaultUri": "",
+"SqlConnectionString": "Server=.;Database=devdb;..."
+
+
+Example in appsettings.Certification.json:
+
+
+"AppEnvironmentCode": "Cert",
+"KeyVaultUri": "",
+"SqlConnectionString": ""
+
+Keep in Azure Portal app settings (per Function App)
+Use portal settings for runtime overrides in Azure:
+
+ASPNETCORE_ENVIRONMENT or AZURE_FUNCTIONS_ENVIRONMENT
+AppEnvironmentCode
+KeyVaultUri
+KeyVaultManagedIdentityClientId
+emergency overrides like AppResources__SqlConnectionString
+
+
+

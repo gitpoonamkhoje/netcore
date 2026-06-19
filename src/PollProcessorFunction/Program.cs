@@ -21,13 +21,16 @@ var host = new HostBuilder()
         config.AddEnvironmentVariables();
 
         var initialConfiguration = config.Build();
-        var keyVaultUri = initialConfiguration["KeyVaultUri"]
-            ?? initialConfiguration["AppResources:KeyVaultUri"];
+        var keyVaultUri = AppEnvironmentConfiguration.GetOptionalSetting(initialConfiguration, "KeyVaultUri");
 
         if (!string.IsNullOrWhiteSpace(keyVaultUri))
         {
-            var managedIdentityClientId = initialConfiguration["KeyVaultManagedIdentityClientId"]
-                ?? initialConfiguration["AppResources:KeyVaultManagedIdentityClientId"];
+            var managedIdentityClientId = AppEnvironmentConfiguration.GetOptionalSetting(
+                initialConfiguration,
+                "KeyVaultManagedIdentityClientId");
+            var environmentCode = AppEnvironmentConfiguration.ResolveEnvironmentCode(
+                initialConfiguration,
+                context.HostingEnvironment.EnvironmentName);
 
             var credentialOptions = new DefaultAzureCredentialOptions();
             if (!string.IsNullOrWhiteSpace(managedIdentityClientId))
@@ -38,7 +41,7 @@ var host = new HostBuilder()
             config.AddAzureKeyVault(
                 new Uri(keyVaultUri),
                 new DefaultAzureCredential(credentialOptions),
-                new AzureKeyVaultConfigurationOptions());
+                new PrefixedKeyVaultSecretManager(environmentCode));
 
             // Keep Azure Portal app settings as final override for emergency/env-specific changes.
             config.AddEnvironmentVariables();

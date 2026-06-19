@@ -38,5 +38,10 @@ public sealed class AppResourcesOptions
     public string KeyVaultUri { get; init; } = "";
 
     public string KeyVaultManagedIdentityClientId { get; init; } = "";
+
+    /// <summary>
+    /// Short environment code used for Key Vault secret prefix lookup (Dev, Cert, Prod).
+    /// </summary>
+    public string AppEnvironmentCode { get; init; } = "";
 }
 
