@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.Data.SqlClient;
 using PollProcessorFunction.Models;
 
@@ -96,6 +97,42 @@ WHERE Id = @id", conn);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task MarkFailedAsync(
+        SqlConnection conn,
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        await using var cmd = new SqlCommand(@"
+UPDATE poll_process
+SET Status = @failed,
+    jobstat_tx = @failed,
+    AgeLastRun_dt = GETDATE()
+WHERE Id = @id", conn);
+
+        cmd.Parameters.AddWithValue("@id", id);
+        cmd.Parameters.AddWithValue("@failed", StatusCodes.Failed);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<int> MarkActiveRowsFailedForAppAsync(
+        SqlConnection conn,
+        string appId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var cmd = new SqlCommand(@"
+UPDATE poll_process
+SET Status = @failed,
+    jobstat_tx = @failed,
+    AgeLastRun_dt = GETDATE()
+WHERE (AppId = @appId OR app_id = @appId)
+  AND (Status = @active OR jobstat_tx = @active)", conn);
+
+        cmd.Parameters.AddWithValue("@appId", appId);
+        cmd.Parameters.AddWithValue("@failed", StatusCodes.Failed);
+        cmd.Parameters.AddWithValue("@active", StatusCodes.Active);
+        return await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task RevertToWaitingAsync(
         SqlConnection conn,
         int id,
@@ -131,7 +168,7 @@ WHERE Id = @id", conn);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    public async Task<bool> EvaluateSqlConditionAsync(
+    public async Task<SqlConditionEvaluation> EvaluateSqlConditionAsync(
         SqlConnection conn,
         PollItem item,
         CancellationToken cancellationToken = default)
@@ -139,21 +176,57 @@ WHERE Id = @id", conn);
         return await EvaluateSqlConditionCoreAsync(conn, item, cancellationToken);
     }
 
-    private static async Task<bool> EvaluateSqlConditionCoreAsync(
+    private static async Task<SqlConditionEvaluation> EvaluateSqlConditionCoreAsync(
         SqlConnection conn,
         PollItem item,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(item.SqlQuery))
         {
-            return false;
+            return new SqlConditionEvaluation(false);
         }
 
-        await using var cmd = new SqlCommand(item.SqlQuery, conn);
-        var result = await cmd.ExecuteScalarAsync(cancellationToken);
-        var actual = result?.ToString();
-        var expected = item.ExpectedValue?.ToString();
-        return string.Equals(actual, expected, StringComparison.Ordinal);
+        // Match sp_wtc_pollproc: compare CAST(sqlcmd_val AS VARCHAR(2000)) to CAST(query result AS VARCHAR(2000)).
+        const string evaluationSql = """
+            SET NOCOUNT ON;
+
+            CREATE TABLE #pptemp (tcol1 sql_variant);
+            INSERT INTO #pptemp EXEC(@userSql);
+
+            DECLARE @actual VARCHAR(2000);
+            DECLARE @expectedVarchar VARCHAR(2000) = CAST(@expected AS VARCHAR(2000));
+
+            SELECT TOP 1 @actual = CAST(tcol1 AS VARCHAR(2000))
+            FROM #pptemp;
+
+            SELECT
+                @actual AS ActualValue,
+                @expectedVarchar AS ExpectedValue,
+                CASE
+                    WHEN @actual IS NOT NULL AND @expectedVarchar = @actual THEN 1
+                    ELSE 0
+                END AS IsMet;
+
+            DROP TABLE #pptemp;
+            """;
+
+        await using var cmd = new SqlCommand(evaluationSql, conn);
+        cmd.Parameters.Add("@userSql", SqlDbType.NVarChar, -1).Value = item.SqlQuery;
+
+        var expectedParam = cmd.Parameters.Add("@expected", SqlDbType.Variant);
+        expectedParam.Value = item.ExpectedValue ?? DBNull.Value;
+
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new SqlConditionEvaluation(false);
+        }
+
+        var actual = reader.IsDBNull(0) ? null : reader.GetString(0);
+        var expected = reader.IsDBNull(1) ? null : reader.GetString(1);
+        var isMet = !reader.IsDBNull(2) && reader.GetInt32(2) == 1;
+
+        return new SqlConditionEvaluation(isMet, actual, expected);
     }
 
     private static PollItem MapPollItem(SqlDataReader reader)
@@ -169,7 +242,7 @@ WHERE Id = @id", conn);
             JobName = reader.GetStringOrNull("JobName", "runjob_tx"),
             Mode = reader.GetStringOrNull("Mode", "mode_cd"),
             SqlQuery = reader.GetStringOrNull("SqlQuery", "sqlcmd_tx"),
-            ExpectedValue = reader.GetStringOrNull("ExpectedValue", "sqlcmd_val"),
+            ExpectedValue = reader.GetValueOrNull("ExpectedValue", "sqlcmd_val"),
             LastRun = lastRun,
             AgeThreshold = ageThreshold,
             AgeJobName = reader.GetStringOrNull("AgeJobName", "AgeJob_tx"),

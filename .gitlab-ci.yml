@@ -1,0 +1,132 @@
+stages:
+  - build
+  - deploy
+
+default:
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "true"
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .nuget/packages/
+
+.azure_login: &azure_login
+  - az login --service-principal --username "$AZURE_CLIENT_ID" --password "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID"
+  - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+
+.build_pollprocessor:
+  stage: build
+  script:
+    - dotnet restore PollProcessorFunction.sln
+    - dotnet build PollProcessorFunction.sln -c Release --no-restore
+    - dotnet publish src/PollProcessorFunction/PollProcessorFunction.csproj -c Release -o publish/pollprocessor
+  artifacts:
+    expire_in: 1 day
+    paths:
+      - publish/pollprocessor/
+
+.build_tabload:
+  stage: build
+  script:
+    - dotnet restore PollProcessorFunction.sln
+    - dotnet build src/TabLoadFunction/TabLoadFunction.csproj -c Release --no-restore
+    - dotnet publish src/TabLoadFunction/TabLoadFunction.csproj -c Release -o publish/tabload
+  artifacts:
+    expire_in: 1 day
+    paths:
+      - publish/tabload/
+
+.deploy_function:
+  stage: deploy
+  image: mcr.microsoft.com/azure-cli:2.63.0
+  before_script:
+    - apk add --no-cache bash zip >/dev/null
+    - chmod +x ci/*.sh
+    - *azure_login
+  script:
+    - export AZURE_FUNCTION_APP_NAME="$FUNCTION_APP_NAME"
+    - export PUBLISH_DIR="$PUBLISH_DIR"
+    - bash ci/deploy-function-app.sh
+
+build:pollprocessor:
+  extends: .build_pollprocessor
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "certification"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+build:tabload:
+  extends: .build_tabload
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "certification"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+deploy:pollprocessor:certification:
+  extends: .deploy_function
+  environment:
+    name: certification
+  variables:
+    FUNCTION_APP_NAME: $POLLPROCESSOR_FUNCTION_APP_NAME
+    PUBLISH_DIR: publish/pollprocessor
+    AZURE_FUNCTIONS_ENVIRONMENT: Certification
+    APP_ENVIRONMENT_CODE: Cert
+    APPRESOURCES_APP_ENVIRONMENT_CODE: Cert
+  needs:
+    - job: build:pollprocessor
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "certification"
+
+deploy:pollprocessor:production:
+  extends: .deploy_function
+  environment:
+    name: production
+  variables:
+    FUNCTION_APP_NAME: $POLLPROCESSOR_FUNCTION_APP_NAME
+    PUBLISH_DIR: publish/pollprocessor
+    AZURE_FUNCTIONS_ENVIRONMENT: Production
+    APP_ENVIRONMENT_CODE: Prod
+    APPRESOURCES_APP_ENVIRONMENT_CODE: Prod
+  needs:
+    - job: build:pollprocessor
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+deploy:tabload:certification:
+  extends: .deploy_function
+  environment:
+    name: certification
+  variables:
+    FUNCTION_APP_NAME: $TABLOAD_FUNCTION_APP_NAME
+    PUBLISH_DIR: publish/tabload
+    AZURE_FUNCTIONS_ENVIRONMENT: Certification
+    APP_ENVIRONMENT_CODE: Cert
+    APPRESOURCES_APP_ENVIRONMENT_CODE: Cert
+  needs:
+    - job: build:tabload
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "certification"
+
+deploy:tabload:production:
+  extends: .deploy_function
+  environment:
+    name: production
+  variables:
+    FUNCTION_APP_NAME: $TABLOAD_FUNCTION_APP_NAME
+    PUBLISH_DIR: publish/tabload
+    AZURE_FUNCTIONS_ENVIRONMENT: Production
+    APP_ENVIRONMENT_CODE: Prod
+    APPRESOURCES_APP_ENVIRONMENT_CODE: Prod
+  needs:
+    - job: build:tabload
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"

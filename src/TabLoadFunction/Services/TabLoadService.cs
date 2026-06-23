@@ -537,9 +537,10 @@ public sealed class TabLoadService : ITabLoadService
     {
         const string sql = """
             UPDATE poll_process
-            SET jobstat_tx = @Status
+            SET Status = @Status,
+                jobstat_tx = @Status
             WHERE filename_tx LIKE @FileNamePattern
-              AND (@AppId = 'N/A' OR app_id = @AppId)
+              AND (@AppId = 'N/A' OR app_id = @AppId OR AppId = @AppId)
             """;
 
         await using var connection = _resources.CreateSqlConnection();

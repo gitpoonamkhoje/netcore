@@ -18,6 +18,21 @@ internal static class SqlDataReaderExtensions
         }
     }
 
+    public static object? GetValueOrNull(this SqlDataReader reader, params string[] columnNames)
+    {
+        foreach (var name in columnNames)
+        {
+            if (!reader.TryGetOrdinal(name, out var ordinal) || reader.IsDBNull(ordinal))
+            {
+                continue;
+            }
+
+            return reader.GetValue(ordinal);
+        }
+
+        return null;
+    }
+
     public static string? GetStringOrNull(this SqlDataReader reader, params string[] columnNames)
     {
         foreach (var name in columnNames)

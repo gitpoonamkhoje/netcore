@@ -58,17 +58,16 @@ public sealed class PollActivity
 
         foreach (var item in waiting.Take(slots))
         {
-            if (!await _repository.TryMarkActiveAsync(conn, item.Id, cancellationToken))
-            {
-                continue;
-            }
-
             var mode = ResolveMode(item, input);
             var conditionMet = await IsConditionMetAsync(share, conn, item, mode, cancellationToken);
 
             if (!conditionMet)
             {
-                await _repository.RevertToWaitingAsync(conn, item.Id, cancellationToken);
+                continue;
+            }
+
+            if (!await _repository.TryMarkActiveAsync(conn, item.Id, cancellationToken))
+            {
                 continue;
             }
 
@@ -102,12 +101,31 @@ public sealed class PollActivity
     {
         if (mode == "S")
         {
-            return await _repository.EvaluateSqlConditionAsync(conn, item, cancellationToken);
+            var evaluation = await _repository.EvaluateSqlConditionAsync(conn, item, cancellationToken);
+            if (!evaluation.IsMet)
+            {
+                _log.LogInformation(
+                    "Poll item {ItemId} SQL condition not met. Expected='{Expected}', Actual='{Actual}'",
+                    item.Id,
+                    evaluation.ExpectedValue,
+                    evaluation.ActualValue);
+            }
+
+            return evaluation.IsMet;
         }
 
         if (mode == "F")
         {
-            return await _fileReadyChecker.IsConditionMetAsync(share, item, cancellationToken);
+            var fileReady = await _fileReadyChecker.IsConditionMetAsync(share, item, cancellationToken);
+            if (!fileReady)
+            {
+                _log.LogDebug(
+                    "Poll item {ItemId} file not ready yet (file {FileName})",
+                    item.Id,
+                    item.FileName);
+            }
+
+            return fileReady;
         }
 
         _log.LogWarning("Poll item {ItemId} has unknown mode '{Mode}'; skipping", item.Id, mode);
@@ -115,8 +133,8 @@ public sealed class PollActivity
     }
 
     /// <summary>
-    /// Condition met: mark poll_process complete and return the job name for external triggering.
-    /// ADF is not invoked here.
+    /// Condition met: keep poll_process active (or complete for loopback) and return the job name for external triggering.
+    /// ADF is not invoked here; tabload sets C/F when childProcess=Y.
     /// </summary>
     private async Task<string?> HandOffReadyItemAsync(
         Microsoft.Data.SqlClient.SqlConnection conn,
@@ -131,10 +149,8 @@ public sealed class PollActivity
             return item.JobName;
         }
 
-        await _repository.MarkCompleteAsync(conn, item.Id, cancellationToken);
-
         _log.LogInformation(
-            "Poll item {ItemId} ready to trigger job {JobName} (file {FileName}); poll_process marked complete, ADF not invoked",
+            "Poll item {ItemId} ready to trigger job {JobName} (file {FileName}); poll_process left active",
             item.Id,
             item.JobName,
             item.FileName);

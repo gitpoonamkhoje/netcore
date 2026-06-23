@@ -1,5 +1,6 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using PollProcessorFunction.Configuration;
 using PollProcessorFunction.Models;
 using PollProcessorFunction.Services;
 
@@ -7,15 +8,21 @@ namespace PollProcessorFunction.Functions.Activities;
 
 public sealed class TriggerReadyJobsActivity
 {
+    private readonly IEnvironmentResources _resources;
+    private readonly IPollProcessRepository _repository;
     private readonly IAdfPipelineTriggerService _adfTrigger;
     private readonly IAdfPipelineMetadataService _metadataService;
     private readonly ILogger<TriggerReadyJobsActivity> _log;
 
     public TriggerReadyJobsActivity(
+        IEnvironmentResources resources,
+        IPollProcessRepository repository,
         IAdfPipelineTriggerService adfTrigger,
         IAdfPipelineMetadataService metadataService,
         ILogger<TriggerReadyJobsActivity> log)
     {
+        _resources = resources;
+        _repository = repository;
         _adfTrigger = adfTrigger;
         _metadataService = metadataService;
         _log = log;
@@ -29,6 +36,9 @@ public sealed class TriggerReadyJobsActivity
         var triggered = new List<string>();
         var failures = new List<PipelineTriggerFailure>();
 
+        await using var conn = _resources.CreateSqlConnection();
+        await conn.OpenAsync(cancellationToken);
+
         foreach (var item in items)
         {
             if (string.IsNullOrWhiteSpace(item.JobName))
@@ -39,6 +49,7 @@ public sealed class TriggerReadyJobsActivity
                     FileName = item.FileName,
                     Reason = "JobName is empty."
                 });
+                await _repository.MarkFailedAsync(conn, item.Id, cancellationToken);
                 continue;
             }
 
@@ -66,6 +77,7 @@ public sealed class TriggerReadyJobsActivity
                         item.JobName,
                         item.Id);
 
+                    await _repository.MarkFailedAsync(conn, item.Id, cancellationToken);
                     continue;
                 }
 
@@ -98,6 +110,8 @@ public sealed class TriggerReadyJobsActivity
                     "Failed to trigger ADF pipeline {Pipeline} for poll item {ItemId}",
                     item.JobName,
                     item.Id);
+
+                await _repository.MarkFailedAsync(conn, item.Id, cancellationToken);
             }
         }
 

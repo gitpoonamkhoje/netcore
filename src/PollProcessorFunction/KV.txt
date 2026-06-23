@@ -63,6 +63,7 @@ AppResources--SqlAgentValidationConnectionString
 
 OR
 
+GITLAB >>
 Dev--AppResources--SqlConnectionString
 Dev--AppResources--AzureWebJobsStorage
 
@@ -198,6 +199,448 @@ AppEnvironmentCode
 KeyVaultUri
 KeyVaultManagedIdentityClientId
 emergency overrides like AppResources__SqlConnectionString
+
+========================================================================
+
+*) Using GITLAB >>
+
+public string AppEnvironmentCode { get; init; } = "";
+That should hold values like:Dev , Cert ,Prod
+
+and your Key Vault secret names would be like:
+
+Dev--AppResources--SqlConnectionString
+Dev--AppResources--AzureWebJobsStorage
+
+Cert--AppResources--SqlConnectionString
+Cert--AppResources--AzureWebJobsStorage 
+
+
+---
+
+1) Final AppResourcesOptions.cs
+
+using System.ComponentModel.DataAnnotations;
+
+namespace PollProcessorFunction.Configuration;
+
+public sealed class AppResourcesOptions
+{
+    public const string SectionName = "AppResources";
+
+    [Required]
+    public string SqlConnectionString { get; init; } = "";
+
+    [Required]
+    public string AzureWebJobsStorage { get; init; } = "";
+
+    [Required]
+    public string StorageAccountName { get; init; } = "";
+
+    [Required]
+    public string FileShareName { get; init; } = "";
+
+    public string DataFactorySubscriptionId { get; init; } = "";
+
+    public string DataFactoryResourceGroupName { get; init; } = "";
+
+    public string DataFactoryName { get; init; } = "";
+
+    public string AdfManagementApiVersion { get; init; } = "2018-06-01";
+
+    public string AdfTriggerUrl { get; init; } = "";
+
+    public string SqlAgentValidationConnectionString { get; init; } = "";
+
+    public string AdfValidationConnectionString { get; init; } = "";
+
+    public string KeyVaultUri { get; init; } = "";
+
+    public string KeyVaultManagedIdentityClientId { get; init; } = "";
+
+    /// <summary>
+    /// Short environment code used for Key Vault secret prefix lookup (Dev, Cert, Prod).
+    /// </summary>
+    public string AppEnvironmentCode { get; init; } = "";
+}
+
+2) Create PrefixedKeyVaultSecretManager.cs
+
+Create a new file:
+Configuration/PrefixedKeyVaultSecretManager.cs
+
+using Azure.Extensions.AspNetCore.Configuration.Secrets;
+using Azure.Security.KeyVault.Secrets;
+using Microsoft.Extensions.Configuration;
+
+namespace PollProcessorFunction.Configuration;
+
+public sealed class PrefixedKeyVaultSecretManager : KeyVaultSecretManager
+{
+    private readonly string _prefix;
+
+    public PrefixedKeyVaultSecretManager(string environmentCode)
+    {
+        if (string.IsNullOrWhiteSpace(environmentCode))
+            throw new ArgumentException("App environment code is required.", nameof(environmentCode));
+
+        _prefix = $"{environmentCode}--";
+    }
+
+    public override bool Load(SecretProperties secret)
+    {
+        return secret.Name.StartsWith(_prefix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public override string GetKey(KeyVaultSecret secret)
+    {
+        // Example:
+        // Dev--AppResources--SqlConnectionString
+        // -> AppResources:SqlConnectionString
+        var trimmed = secret.Name[_prefix.Length..];
+        return trimmed.Replace("--", ConfigurationPath.KeyDelimiter);
+    }
+}
+
+3) Final Program.cs
+
+using Azure.Extensions.AspNetCore.Configuration.Secrets;
+using Azure.Identity;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using PollProcessorFunction.Configuration;
+using PollProcessorFunction.Services;
+
+var host = new HostBuilder()
+    .ConfigureAppConfiguration((context, config) =>
+    {
+        // Local files
+        config.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
+
+        var env = context.HostingEnvironment.EnvironmentName;
+        if (!string.IsNullOrWhiteSpace(env))
+        {
+            config.AddJsonFile($"appsettings.{env}.json", optional: true, reloadOnChange: false);
+        }
+
+        // Azure Function App settings / environment variables
+        config.AddEnvironmentVariables();
+
+        var initialConfiguration = config.Build();
+
+        var keyVaultUri = initialConfiguration["AppResources:KeyVaultUri"];
+        var managedIdentityClientId = initialConfiguration["AppResources:KeyVaultManagedIdentityClientId"];
+        var appEnvironmentCode = initialConfiguration["AppResources:AppEnvironmentCode"];
+
+        if (!string.IsNullOrWhiteSpace(keyVaultUri))
+        {
+            var credentialOptions = new DefaultAzureCredentialOptions();
+
+            if (!string.IsNullOrWhiteSpace(managedIdentityClientId))
+            {
+                credentialOptions.ManagedIdentityClientId = managedIdentityClientId;
+            }
+
+            config.AddAzureKeyVault(
+                new Uri(keyVaultUri),
+                new DefaultAzureCredential(credentialOptions),
+                new PrefixedKeyVaultSecretManager(appEnvironmentCode));
+
+            // Keep Function App settings as final override
+            config.AddEnvironmentVariables();
+        }
+    })
+    .ConfigureFunctionsWorkerDefaults()
+    .ConfigureServices((context, services) =>
+    {
+        services.AddOptions<AppResourcesOptions>()
+            .Bind(context.Configuration.GetSection(AppResourcesOptions.SectionName))
+            .ValidateDataAnnotations();
+
+        services.AddSingleton<IEnvironmentResources, EnvironmentResources>();
+        services.AddSingleton<IPollProcessRepository, PollProcessRepository>();
+        services.AddSingleton<IFileReadyChecker, FileReadyChecker>();
+        services.AddSingleton<IAdfPipelineTriggerService, AdfPipelineTriggerService>();
+        services.AddSingleton<IAdfPipelineMetadataService, AdfPipelineMetadataService>();
+        services.AddSingleton<IAdfPipelineInfoSqlWriter, AdfPipelineInfoSqlWriter>();
+        services.AddSingleton<IAdfPipelineRuntimeSqlWriter, AdfPipelineRuntimeSqlWriter>();
+        services.AddSingleton<IPollNotificationService, PollNotificationService>();
+
+        services.AddHttpClient(nameof(AdfPipelineTriggerService));
+        services.AddHttpClient(nameof(AdfPipelineMetadataService));
+    })
+    .Build();
+
+host.Run();
+
+4) What to create in Azure Key Vault
+DEV secrets
+Dev--AppResources--SqlConnectionString
+Dev--AppResources--AzureWebJobsStorage
+Dev--AppResources--SqlAgentValidationConnectionString
+Dev--AppResources--AdfValidationConnectionString
+
+CERT secrets
+Cert--AppResources--SqlConnectionString
+Cert--AppResources--AzureWebJobsStorage
+Cert--AppResources--SqlAgentValidationConnectionString
+Cert--AppResources--AdfValidationConnectionString
+
+5) What to create in GitLab CI/CD variables
+
+Create these variables in GitLab per environment.
+
+APP_ENV_CODE
+APP_KEYVAULT_URI
+APP_KEYVAULT_MANAGED_IDENTITY_CLIENT_ID
+APP_FILE_SHARE_NAME
+APP_STORAGE_ACCOUNT_NAME
+APP_DATAFACTORY_NAME
+APP_DATAFACTORY_RESOURCE_GROUP
+APP_DATAFACTORY_SUBSCRIPTION_ID
+APP_ADF_TRIGGER_URL
+
+6) Example GitLab variable values
+DEV environment in GitLab
+
+| Variable                                  | Value                             |
+| ----------------------------------------- | --------------------------------- |
+| `APP_ENV_CODE`                            | `Dev`                             |
+| `APP_KEYVAULT_URI`                        | `https://kv-ods.vault.azure.net/` |
+| `APP_KEYVAULT_MANAGED_IDENTITY_CLIENT_ID` | `<managed-identity-client-id>`    |
+| `APP_FILE_SHARE_NAME`                     | `dev-share`                       |
+| `APP_STORAGE_ACCOUNT_NAME`                | `devstorage`                      |
+| `APP_DATAFACTORY_NAME`                    | `ods-adf-dev`                     |
+
+CERT environment in GitLab
+
+| Variable                                  | Value                             |
+| ----------------------------------------- | --------------------------------- |
+| `APP_ENV_CODE`                            | `Cert`                            |
+| `APP_KEYVAULT_URI`                        | `https://kv-ods.vault.azure.net/` |
+| `APP_KEYVAULT_MANAGED_IDENTITY_CLIENT_ID` | `<managed-identity-client-id>`    |
+| `APP_FILE_SHARE_NAME`                     | `cert-share`                      |
+| `APP_STORAGE_ACCOUNT_NAME`                | `certstorage`                     |
+| `APP_DATAFACTORY_NAME`                    | `ods-adf-cert`                    |
+
+
+7) Final .gitlab-ci.yml sample
+
+stages:
+  - build
+  - deploy
+
+variables:
+  DOTNET_VERSION: "8.0.x"
+
+build_function:
+  stage: build
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - dotnet restore
+    - dotnet publish PollProcessorFunction/PollProcessorFunction.csproj -c Release -o publish
+  artifacts:
+    paths:
+      - publish/
+
+deploy_function:
+  stage: deploy
+  image: mcr.microsoft.com/azure-cli:2.61.0
+  script:
+    - az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID"
+
+    # Deploy Function App package
+    - az functionapp deployment source config-zip \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --name "$AZURE_FUNCTIONAPP_NAME" \
+        --src publish.zip
+
+    # Push app settings into Azure Function
+    - az functionapp config appsettings set \
+        --name "$AZURE_FUNCTIONAPP_NAME" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --settings \
+          AppResources__AppEnvironmentCode="$APP_ENV_CODE" \
+          AppResources__KeyVaultUri="$APP_KEYVAULT_URI" \
+          AppResources__KeyVaultManagedIdentityClientId="$APP_KEYVAULT_MANAGED_IDENTITY_CLIENT_ID" \
+          AppResources__FileShareName="$APP_FILE_SHARE_NAME" \
+          AppResources__StorageAccountName="$APP_STORAGE_ACCOUNT_NAME" \
+          AppResources__DataFactoryName="$APP_DATAFACTORY_NAME" \
+          AppResources__DataFactoryResourceGroupName="$APP_DATAFACTORY_RESOURCE_GROUP" \
+          AppResources__DataFactorySubscriptionId="$APP_DATAFACTORY_SUBSCRIPTION_ID" \
+          AppResources__AdfTriggerUrl="$APP_ADF_TRIGGER_URL"
+
+  environment:
+    name: $CI_ENVIRONMENT_NAME
+
+
+8) How the runtime resolves everything
+
+Suppose Dev deployment runs.
+GitLab variables
+APP_ENV_CODE=Dev
+APP_FILE_SHARE_NAME=dev-share
+APP_STORAGE_ACCOUNT_NAME=devstorage
+APP_KEYVAULT_URI=https://kv-ods.vault.azure.net/
+
+
+Function starts
+
+It reads:
+AppResources:AppEnvironmentCode = "Dev"
+
+Key Vault manager loads only:
+Dev--AppResources--SqlConnectionString
+Dev--AppResources--AzureWebJobsStorage
+
+After mapping, config becomes:
+AppResources:SqlConnectionString = <secret value>
+AppResources:AzureWebJobsStorage = <secret value>
+AppResources:FileShareName = dev-share
+AppResources:StorageAccountName = devstorage
+
+9) One correction in the GitLab pipeline sample
+
+In the sample above I used publish.zip, but the build stage only publishes to a folder.
+So in practice you should zip it before deploy.
+
+build_function:
+  stage: build
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - dotnet restore
+    - dotnet publish PollProcessorFunction/PollProcessorFunction.csproj -c Release -o publish
+    - cd publish
+    - zip -r ../publish.zip .
+    - cd ..
+  artifacts:
+    paths:
+      - publish.zip
+
+
+*)What I recommend you do next
+
+For your repo, I’d implement these 4 things first:
+
+Add PrefixedKeyVaultSecretManager.cs
+Update Program.cs exactly as above
+Add AppResources__AppEnvironmentCode in GitLab per environment
+Create Key Vault secrets with Dev--, Cert--, Prod-- prefixes
+
+==============================================================
+
+Dynamic string creation
+
+
+using Azure.Extensions.AspNetCore.Configuration.Secrets;
+using Azure.Identity;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using PollProcessorFunction.Configuration;
+using PollProcessorFunction.Services;
+
+var host = new HostBuilder()
+    .ConfigureAppConfiguration((context, config) =>
+    {
+        config.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
+
+        var env = context.HostingEnvironment.EnvironmentName;
+        if (!string.IsNullOrWhiteSpace(env))
+        {
+            config.AddJsonFile($"appsettings.{env}.json", optional: true, reloadOnChange: false);
+        }
+
+        config.AddEnvironmentVariables();
+
+        var initialConfiguration = config.Build();
+
+        var keyVaultUri = initialConfiguration["AppResources:KeyVaultUri"];
+        var managedIdentityClientId = initialConfiguration["AppResources:KeyVaultManagedIdentityClientId"];
+        var appEnvironmentCode = initialConfiguration["AppResources:AppEnvironmentCode"];
+
+        if (!string.IsNullOrWhiteSpace(keyVaultUri))
+        {
+            var credentialOptions = new DefaultAzureCredentialOptions();
+
+            if (!string.IsNullOrWhiteSpace(managedIdentityClientId))
+            {
+                credentialOptions.ManagedIdentityClientId = managedIdentityClientId;
+            }
+
+            config.AddAzureKeyVault(
+                new Uri(keyVaultUri),
+                new DefaultAzureCredential(credentialOptions),
+                new PrefixedKeyVaultSecretManager(appEnvironmentCode));
+
+            config.AddEnvironmentVariables();
+        }
+    })
+    .ConfigureFunctionsWorkerDefaults()
+    .ConfigureServices((context, services) =>
+    {
+        services.AddOptions<AppResourcesOptions>()
+            .Bind(context.Configuration.GetSection(AppResourcesOptions.SectionName))
+            .PostConfigure(options =>
+            {
+                // Build dynamic values here if not already provided
+                if (string.IsNullOrWhiteSpace(options.FileShareName) &&
+                    !string.IsNullOrWhiteSpace(options.AppEnvironmentCode))
+                {
+                    options.FileShareName =
+                        $"{options.AppEnvironmentCode.ToLowerInvariant()}-share";
+                }
+
+                if (string.IsNullOrWhiteSpace(options.StorageAccountName) &&
+                    !string.IsNullOrWhiteSpace(options.AppEnvironmentCode))
+                {
+                    options.StorageAccountName =
+                        $"{options.AppEnvironmentCode.ToLowerInvariant()}storage";
+                }
+            })
+            .ValidateDataAnnotations();
+
+        services.AddSingleton<IEnvironmentResources, EnvironmentResources>();
+        services.AddSingleton<IPollProcessRepository, PollProcessRepository>();
+        services.AddSingleton<IFileReadyChecker, FileReadyChecker>();
+        services.AddSingleton<IAdfPipelineTriggerService, AdfPipelineTriggerService>();
+        services.AddSingleton<IAdfPipelineMetadataService, AdfPipelineMetadataService>();
+        services.AddSingleton<IAdfPipelineInfoSqlWriter, AdfPipelineInfoSqlWriter>();
+        services.AddSingleton<IAdfPipelineRuntimeSqlWriter, AdfPipelineRuntimeSqlWriter>();
+        services.AddSingleton<IPollNotificationService, PollNotificationService>();
+
+        services.AddHttpClient(nameof(AdfPipelineTriggerService));
+        services.AddHttpClient(nameof(AdfPipelineMetadataService));
+    })
+    .Build();
+
+host.Run();
+
+
+
+===================================
+
+
+Option A — ADF tells you explicitly (best match for ADF)
+When ADF retries the pipeline/step, pass:
+
+{
+  "appId": "MYAPP",
+  "reset": false,
+  "isRetry": true
+}
+ADF knows retry count via:
+
+Pipeline rerun
+Activity retry policy
+@{activity().RetryCount} or similar in ADF expressions
+This replaces current_retry_attempt directly. No SPID, no JobLoadLog needed for detection.
+
+
+
 
 
 

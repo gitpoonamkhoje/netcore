@@ -15,9 +15,13 @@ public interface IPollProcessRepository
 
     Task MarkCompleteAsync(SqlConnection conn, int id, CancellationToken cancellationToken = default);
 
+    Task MarkFailedAsync(SqlConnection conn, int id, CancellationToken cancellationToken = default);
+
+    Task<int> MarkActiveRowsFailedForAppAsync(SqlConnection conn, string appId, CancellationToken cancellationToken = default);
+
     Task RevertToWaitingAsync(SqlConnection conn, int id, CancellationToken cancellationToken = default);
 
-    Task<bool> EvaluateSqlConditionAsync(SqlConnection conn, PollItem item, CancellationToken cancellationToken = default);
+    Task<SqlConditionEvaluation> EvaluateSqlConditionAsync(SqlConnection conn, PollItem item, CancellationToken cancellationToken = default);
 
     Task MarkActiveForFallbackAsync(SqlConnection conn, int id, CancellationToken cancellationToken = default);
 }
