@@ -25,11 +25,14 @@ public sealed class FixIncompleteActivity
 
         await using var cmd = new SqlCommand(@"
 UPDATE poll_process
-SET Status = 'W'
-WHERE AppId = @appId
-  AND Status = 'A'", conn);
+SET Status = @waiting,
+    jobstat_tx = @waiting
+WHERE (AppId = @appId OR app_id = @appId)
+  AND (Status = @active OR jobstat_tx = @active)", conn);
 
         cmd.Parameters.AddWithValue("@appId", input.AppId);
+        cmd.Parameters.AddWithValue("@waiting", StatusCodes.Waiting);
+        cmd.Parameters.AddWithValue("@active", StatusCodes.Active);
         await cmd.ExecuteNonQueryAsync();
 
         _log.LogWarning("Retry detected; resetting 'A' records back to 'W' for AppId {AppId}", input.AppId);

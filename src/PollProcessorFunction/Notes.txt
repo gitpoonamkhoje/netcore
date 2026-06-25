@@ -911,6 +911,32 @@ DDL .sql execution
 ExecuteIndexScript
 .idx execution
 
+----------------------------------------------------
+
+W  → file/SQL condition met → A
+A  → ADF trigger fails      → F  (TriggerReadyJobsActivity)
+A  → tabload succeeds       → C  (TabLoad with childProcess=Y)
+A  → tabload fails          → F  (TabLoad with childProcess=Y)
+A  → orchestration crashes  → F  (GetPollStatus on Failed)
+DBA_LOOPBACK                → C  (immediate)
+
+
+
+TabLoad vs TabDump (old procs)
+Procedure		Purpose						Touches poll_process?
+sp_wtc_tabload		Inbound — load flat file into SQL		Yes — C / F when @ch_pr = 'Y'
+sp_wtc_tabdump		Outbound — export table data to file (BCP)	No
+
+
+Flow in PollActivity:
+
+File condition met (mode = F)
+TryMarkActiveAsync → W → A
+HandOffReadyItemAsync → stays A (does not call MarkCompleteAsync)
+
+
+
+
 
 
 

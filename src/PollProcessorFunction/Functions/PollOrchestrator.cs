@@ -11,29 +11,35 @@ public static class PollOrchestrator
     {
         var input = context.GetInput<PollRequest>() ?? new PollRequest();
 
-        bool isRetry = await context.CallActivityAsync<bool>(
-            "DetectRetryActivity",
-            input);
-
-        if (isRetry)
+        // Old sp_wtc_pollproc: SQL Agent retry forced @reset = 'N' and kept A rows.
+        // Pass IsRetry=true from ADF on pipeline retry (replaces @SPIDNo / @@SPID check).
+        if (!input.IsRetry)
         {
-            await context.CallActivityAsync(
-                "FixIncompleteActivity",
+            bool hasActiveRows = await context.CallActivityAsync<bool>(
+                "DetectRetryActivity",
                 input);
-        }
 
-        bool shouldReset = input.Reset;
-        if (shouldReset && !isRetry)
-        {
-            await context.CallActivityAsync(
-                "ResetStatusActivity",
-                input);
+            if (hasActiveRows)
+            {
+                await context.CallActivityAsync(
+                    "FixIncompleteActivity",
+                    input);
+            }
+
+            if (input.Reset)
+            {
+                await context.CallActivityAsync(
+                    "ResetStatusActivity",
+                    input);
+            }
         }
 
         DateTime stopTime = context.CurrentUtcDateTime.AddHours(input.PollForHours);
         var jobsToTrigger = new List<string>();
+        var readyJobs = new List<ReadyJobHandoff>();
         var triggeredPipelines = new List<string>();
         var failedTriggers = new List<PipelineTriggerFailure>();
+        var handedOffIds = new HashSet<int>();
 
         while (context.CurrentUtcDateTime < stopTime)
         {
@@ -44,23 +50,40 @@ public static class PollOrchestrator
             if (pollResult.JobsToTrigger.Count > 0)
             {
                 jobsToTrigger.AddRange(pollResult.JobsToTrigger);
-                var triggerResult = await context.CallActivityAsync<PipelineTriggerResult>(
-                    "TriggerReadyJobsActivity",
-                    pollResult.PipelineTriggers);
 
-                if (triggerResult.TriggeredPipelines.Count > 0)
+                foreach (var item in pollResult.PipelineTriggers)
                 {
-                    triggeredPipelines.AddRange(triggerResult.TriggeredPipelines);
+                    if (handedOffIds.Add(item.Id))
+                    {
+                        readyJobs.Add(new ReadyJobHandoff
+                        {
+                            Id = item.Id,
+                            JobName = item.JobName,
+                            FileName = item.FileName,
+                            AppId = input.AppId
+                        });
+                    }
                 }
 
-                if (triggerResult.FailedTriggers.Count > 0)
-                {
-                    failedTriggers.AddRange(triggerResult.FailedTriggers);
-                }
+                // ADF trigger disabled — ADF team triggers pipelines externally from ReadyJobs.
+                //var triggerResult = await context.CallActivityAsync<PipelineTriggerResult>(
+                //    "TriggerReadyJobsActivity",
+                //    pollResult.PipelineTriggers);
+                //
+                //if (triggerResult.TriggeredPipelines.Count > 0)
+                //{
+                //    triggeredPipelines.AddRange(triggerResult.TriggeredPipelines);
+                //}
+                //
+                //if (triggerResult.FailedTriggers.Count > 0)
+                //{
+                //    failedTriggers.AddRange(triggerResult.FailedTriggers);
+                //}
 
                 context.SetCustomStatus(new PollOrchestrationResult
                 {
                     JobsToTrigger = jobsToTrigger,
+                    ReadyJobs = readyJobs,
                     TriggeredPipelines = triggeredPipelines,
                     FailedTriggers = failedTriggers
                 });
@@ -83,9 +106,9 @@ public static class PollOrchestrator
         return new PollOrchestrationResult
         {
             JobsToTrigger = jobsToTrigger,
+            ReadyJobs = readyJobs,
             TriggeredPipelines = triggeredPipelines,
             FailedTriggers = failedTriggers
         };
     }
 }
-

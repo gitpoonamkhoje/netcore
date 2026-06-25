@@ -23,8 +23,10 @@ public sealed class DetectRetryActivity
         await using var cmd = new SqlCommand(@"
 SELECT COUNT(*)
 FROM poll_process
-WHERE AppId = @appId
-  AND Status = 'A'", conn);
+WHERE (AppId = @appId OR app_id = @appId)
+  AND (Status = @active OR jobstat_tx = @active)", conn);
+
+        cmd.Parameters.AddWithValue("@active", StatusCodes.Active);
 
         cmd.Parameters.AddWithValue("@appId", input.AppId);
 
