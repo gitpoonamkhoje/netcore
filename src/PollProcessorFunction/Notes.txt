@@ -935,6 +935,41 @@ TryMarkActiveAsync → W → A
 HandOffReadyItemAsync → stays A (does not call MarkCompleteAsync)
 
 
+----------------------------------------------------------
+
+DF POST examples
+First / scheduled run:
+
+{
+  "appId": "APP1",
+  "mode": "F",
+  "reset": true,
+  "isRetry": false,
+  "pollForHours": 2
+}
+ADF pipeline retry (replaces @SPIDNo / @@SPID):
+
+{
+  "appId": "APP1",
+  "mode": "F",
+  "reset": false,
+  "isRetry": true,
+  "pollForHours": 2
+}
+GetPollStatus response (handoff)
+
+{
+  "Completed": true,
+  "Result": {
+    "JobsToTrigger": ["MyPipeline"],
+    "ReadyJobs": [
+      { "Id": 42, "JobName": "MyPipeline", "FileName": "MYFILE.txt", "AppId": "APP1" }
+    ],
+    "TriggeredPipelines": [],
+    "FailedTriggers": []
+  }
+}
+
 
 
 
