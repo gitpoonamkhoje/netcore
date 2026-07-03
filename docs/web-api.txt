@@ -1,0 +1,162 @@
+https://code-maze.com/aspnetcore-webapi-best-practices/
+
+
+*) The most used methods are:
+
+OK => returns the 200 status code
+NotFound => returns the 404 status code
+BadRequest => returns the 400 status code
+NoContent => returns the 204 status code
+Created, CreatedAtRoute, CreatedAtAction => returns the 201 status code
+Unauthorized => returns the 401 status code
+Forbid => returns the 403 status code
+
+*) Alias >> 
+
+[HttpGet("{id}", Name = "OwnerById")]
+    public IActionResult GetOwnerById(Guid id)
+    {   
+        
+    }
+
+*) https://learn.microsoft.com/en-us/aspnet/web-api/overview/web-api-routing-and-actions/create-a-rest-api-with-attribute-routing
+
+
+[HttpGet("{id}")]
+[ProducesResponseType(StatusCodes.Status200OK, Type = typeof(Product))]
+[ProducesResponseType(StatusCodes.Status404NotFound)]
+public IActionResult GetById(int id)
+{
+    if (!_repository.TryGetProduct(id, out var product))
+    {
+        return NotFound();
+    }
+
+    return Ok(product);
+}
+
+
+HttpGet("syncsale")]
+public IEnumerable<Product> GetOnSaleProducts()
+{
+    var products = _productContext.Products.OrderBy(p => p.Name).ToList();
+
+    foreach (var product in products)
+    {
+        if (product.IsOnSale)
+        {
+            yield return product;
+        }
+    }
+}
+
+*) API version
+https://www.c-sharpcorner.com/article/api-versioning-in-asp-net-core-web-api/
+https://www.infoworld.com/article/3671870/how-to-version-minimal-apis-in-aspnet-core-6.html
+
+https://blog.christian-schou.dk/how-to-use-api-versioning-in-net-core-web-api/
+
+
+*)
+https://dotnettutorials.net/lesson/web-api-experienced-interview-questions/
+
+
+Content negotiation is the process of selecting the best representation for a given response when there are multiple representations available. Means, depending on the Accept header value in the request, the server sends the response.
+
+*) ASP.NET Core Web APIs: Load Testing
+https://www.carlrippon.com/scalable-and-performant-asp-net-core-web-apis-load-testing/
+https://www.carlrippon.com/scalable-and-performant-asp-net-core-web-apis-filtering-and-searching/
+
+*)The resource server is the OAuth 2.0 term for your API server. The resource server handles authenticated requests after the application has obtained an access token.
+
+Large scale deployments may have more than one resource server. 
+
+*) On authorize  >>
+https://jasonwatmore.com/post/2022/02/18/net-6-role-based-authorization-tutorial-with-example-api#authorize-attribute-cs
+https://github.com/cornflourblue/dotnet-6-role-based-authorization-api/blob/master/Controllers/UsersController.cs
+
+
+try
+{
+    DoSomeHttpRequest();
+}
+catch (System.Web.HttpException e) if (e.GetHttpCode() == 400)
+{
+    WriteLine("Not Found");
+}
+catch (System.Web.HttpException e) if (e.GetHttpCode() == 500)
+{
+    WriteLine("Internal Server Error");
+}
+catch
+{
+    WriteLine("Generic Error");
+}
+
+----------------------
+
+try
+{
+    DoSomeHttpRequest();
+}
+catch (System.Web.HttpException e)
+{
+    switch (e.GetHttpCode())
+    {
+        case 400:
+            WriteLine("Bad Request");
+        case 500:
+            WriteLine("Internal Server Error");
+        default:
+            WriteLine("Generic Error");
+    }
+}
+
+
+------------------------
+
+Accept: application/json >>
+if a client wants "response data in JSON format" then it will send following GET HTTP request with Accept header to the Web API.
+
+Content-Type: application/json >>
+The same way, if a client includes "JSON data in the request body"
+
+
+*) Exception handling in API
+https://www.c-sharpcorner.com/article/exception-handling-4-in-asp-net-core-mvc/
+Global api handling in aPI >>
+
+https://dev.to/moe23/net-6-web-api-global-exceptions-handling-1a46
+https://code-maze.com/global-error-handling-aspnetcore/
+
+
+3000 sqrt >>
+3200 mhz
+
+n8
+
+--------------------
+
+100 to 199 are informational codes.
+ 200 to 299 are success codes
+300 to 399 range are redirection codes
+400 range are considered to be client error codes. 
+500 range status code are server errors,
+
+----------------------------
+Microservices >>
+
+*) what is Microservices
+
+>>it is a designed pattern in which application are composed of small and indepedent modules that communicate with each other using well defined contracts.
+each microservice focuses on a single concept.
+
+
+Service fabric >>
+running multiple instance of services at once, partitioning, 
+
+by replicating and partitioning we can achieve high avalability, reliability and scalibily 
+
+continuous orchitestration, failure detection, reliable message  dilevery all are internally hanlded by service fabric platform and we just have to focus on  business logic functionality
+
+
