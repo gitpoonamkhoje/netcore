@@ -1,0 +1,39 @@
+{
+  "source": "SPECTR",
+  "inputDirectory": "ifr/spectr/inbound",
+  "applyTransformations": true,
+  "skipAlreadyProcessed": true,
+  "moveToProcessedFolder": true
+}
+
+APT: as-is conversion (AptApplyTransformations=false)
+SPECTR: logo + **bold** + __underline__ (SpectrApplyTransformations=true)
+
+How it works
+1. APT vs SPECTR comes from the blob path:
+
+Upload path				Source
+ifr/apt/inbound/file.txt		APT
+ifr/spectr/inbound/file.txt		SPECTR
+
+2. Transformations come from AppResources settings:
+
+Setting				Default		Used when
+AptApplyTransformations		false		File is under apt/...
+SpectrApplyTransformations	true		File is under spectr/...
+
+In AptSpectrBlobProcessor, that logic is:
+
+        var applyTransformations = source == AptSpectrSources.Apt
+            ? _resources.AptApplyTransformations
+            : _resources.SpectrApplyTransformations;
+So:
+
+APT file in blob → applyTransformations = false (as-is PDF)
+SPECTR file in blob → applyTransformations = true (logo, bold, underline)
+
+Config (not per-file input)
+In local.settings.json or app settings:
+
+"AppResources__AptApplyTransformations": "false",
+"AppResources__SpectrApplyTransformations": "true"

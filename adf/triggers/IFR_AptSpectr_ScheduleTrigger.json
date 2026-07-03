@@ -1,0 +1,31 @@
+{
+  "name": "IFR_AptSpectr_Schedule",
+  "properties": {
+    "description": "Runs IFR APT/SPECTR pipeline on a schedule (alternative to in-function timer poll).",
+    "annotations": [],
+    "runtimeState": "Stopped",
+    "pipelines": [
+      {
+        "pipelineReference": {
+          "referenceName": "IFR_AptSpectr",
+          "type": "PipelineReference"
+        },
+        "parameters": {
+          "IfrFunctionBaseUrl": "https://<ifr-function-app>.azurewebsites.net",
+          "IfrFunctionKey": "<store-in-key-vault-or-adf-secret>",
+          "AptInputDirectory": "ifr/apt/inbound",
+          "SpectrInputDirectory": "ifr/spectr/inbound"
+        }
+      }
+    ],
+    "type": "ScheduleTrigger",
+    "typeProperties": {
+      "recurrence": {
+        "frequency": "Hour",
+        "interval": 1,
+        "startTime": "2026-01-01T00:00:00Z",
+        "timeZone": "UTC"
+      }
+    }
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "name": "IFR_AptSpectr",
+  "properties": {
+    "description": "IFR diagram section (2): APT and SPECTR — read from file share, convert to PDF, store MTB_APT / MTB_SPECTR metadata.",
+    "parameters": {
+      "IfrFunctionBaseUrl": {
+        "type": "string",
+        "defaultValue": "https://<ifr-function-app>.azurewebsites.net"
+      },
+      "IfrFunctionKey": {
+        "type": "securestring"
+      },
+      "AptInputDirectory": {
+        "type": "string",
+        "defaultValue": "ifr/apt/inbound"
+      },
+      "SpectrInputDirectory": {
+        "type": "string",
+        "defaultValue": "ifr/spectr/inbound"
+      }
+    },
+    "activities": [
+      {
+        "name": "ProcessAPT",
+        "type": "WebActivity",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.01:00:00",
+          "retry": 2,
+          "retryIntervalInSeconds": 30
+        },
+        "userProperties": [],
+        "typeProperties": {
+          "method": "POST",
+          "url": {
+            "value": "@concat(pipeline().parameters.IfrFunctionBaseUrl, '/api/ifr/apt-spectr?code=', pipeline().parameters.IfrFunctionKey)",
+            "type": "Expression"
+          },
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "source": "APT",
+            "inputDirectory": "@{pipeline().parameters.AptInputDirectory}",
+            "applyTransformations": false,
+            "skipAlreadyProcessed": true,
+            "moveToProcessedFolder": true
+          }
+        }
+      },
+      {
+        "name": "ProcessSPECTR",
+        "type": "WebActivity",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.01:00:00",
+          "retry": 2,
+          "retryIntervalInSeconds": 30
+        },
+        "userProperties": [],
+        "typeProperties": {
+          "method": "POST",
+          "url": {
+            "value": "@concat(pipeline().parameters.IfrFunctionBaseUrl, '/api/ifr/apt-spectr?code=', pipeline().parameters.IfrFunctionKey)",
+            "type": "Expression"
+          },
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "source": "SPECTR",
+            "inputDirectory": "@{pipeline().parameters.SpectrInputDirectory}",
+            "applyTransformations": true,
+            "skipAlreadyProcessed": true,
+            "moveToProcessedFolder": true
+          }
+        }
+      },
+      {
+        "name": "CheckAPTResult",
+        "type": "IfCondition",
+        "dependsOn": [
+          {
+            "activity": "ProcessAPT",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "userProperties": [],
+        "typeProperties": {
+          "expression": {
+            "value": "@equals(activity('ProcessAPT').output.succeeded, true)",
+            "type": "Expression"
+          },
+          "ifFalseActivities": [
+            {
+              "name": "FailAPT",
+              "type": "Fail",
+              "dependsOn": [],
+              "userProperties": [],
+              "typeProperties": {
+                "message": "APT processing failed",
+                "errorCode": "IFR_APT_FAILED"
+              }
+            }
+          ],
+          "ifTrueActivities": []
+        }
+      },
+      {
+        "name": "CheckSPECTRResult",
+        "type": "IfCondition",
+        "dependsOn": [
+          {
+            "activity": "ProcessSPECTR",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "userProperties": [],
+        "typeProperties": {
+          "expression": {
+            "value": "@equals(activity('ProcessSPECTR').output.succeeded, true)",
+            "type": "Expression"
+          },
+          "ifFalseActivities": [
+            {
+              "name": "FailSPECTR",
+              "type": "Fail",
+              "dependsOn": [],
+              "userProperties": [],
+              "typeProperties": {
+                "message": "SPECTR processing failed",
+                "errorCode": "IFR_SPECTR_FAILED"
+              }
+            }
+          ],
+          "ifTrueActivities": []
+        }
+      }
+    ],
+    "annotations": [
+      "IFR",
+      "APT",
+      "SPECTR"
+    ]
+  }
+}
