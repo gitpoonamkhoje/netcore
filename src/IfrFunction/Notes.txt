@@ -37,3 +37,113 @@ In local.settings.json or app settings:
 
 "AppResources__AptApplyTransformations": "false",
 "AppResources__SpectrApplyTransformations": "true"
+
+-----------------------------------------------------------------
+
+1) **EBR Process Overview**
+
+The process strips the line and creates an index in SQL to determine when each job should start and when each statement processing should end.
+
+In the production (PROD) environment, the job starts every Tuesday at **7:00 AM**.
+
+For the EBR process, the input will be provided by **GMC**. GMC will generate an input file, which may contain approximately **200 records**, to be converted into PDF files as part of the new processing flow.
+
+The client has confirmed that the input files will be delivered to **Blob Storage**.
+
+The initial EBR process is the same as the existing process. After the input files are received from GMC, they will be processed according to the new PDF generation flow.
+
+
+2) **SRDE & EBR**
+
+SRDE and EBR are received through **IFDConv**. As per the **SD email**, both are classified under **Statement Report Type 3**.
+The IFDConv database stores the data required for statement processing. Both SRDE and EBR records are received through IFDConv and are classified as Statement Report Type 3, as specified in the SD email.
+
+
+3) ### APT to PDF and Spectr to PDF
+
+* Both **APT to PDF** and **Spectr to PDF** use the **Target Stream**. Evaluate whether the Target Stream dependency can be eliminated to reduce processing complexity.
+* Confirm whether both processes are scheduled to run at specific times.
+* **APT to PDF** performs additional formatting, such as applying **bold**, **underline**, and **logo insertion**, whereas **Spectr to PDF** performs a straightforward PDF conversion with no additional formatting.
+* APT processes two input file types: **.JRN** and **.AFP**.
+
+### APT to PDF – Information Required
+
+Please confirm the following details for the **APT to PDF** process:
+
+* The complete process flow.
+* The two input file types that are converted into PDF.
+* Sample input files and the corresponding expected PDF output files.
+* The database used (**IFR_V2**) and the configuration details stored in the database.
+* Which database tables and configuration values need to be updated.
+* The destination folder where the generated PDF files are stored.
+
+
+Bottom line
+JRN → PDF: feasible in pure .NET with custom logic
+AFP → PDF: feasible in .NET, but needs a dedicated AFP converter (third-party or legacy tool), not PDFSharp
+
+
+AFP file arrives (blob/file share)
+        ↓
+Azure Function (.NET)
+        ↓
+Dedicated AFP converter  ← NOT PDFSharp
+        ↓
+PDF file
+        ↓
+Archive + MTB_APT metadata
+
+4) ## Advices Process
+
+### Input Files
+
+* Sample input files will be provided in the following formats (without any file extension):
+
+  * **SEI_WTC_ADVICES**
+  * **SEI_QA_ATCO_ADVICES**
+* The .NET application executes SQL stored procedures/queries to retrieve the required data and formats it into the required output file.
+
+### Scheduling
+
+* Confirm the job schedule and execution time for the .NET application.
+* All scheduling information for **SRDE** and **EBR** can be found in the **ODREXT.OLTP.tb_ebr_schedule** table.
+* Understand the significance of the **ODT** concept and how it is used in scheduling and processing.
+
+### Process Flow
+
+* The .NET application runs on a scheduled basis.
+* It executes SQL stored procedures and queries against the **ODS** and **ODREXT** databases.
+* The retrieved data is formatted into a text file.
+* The generated output file is then placed in the designated **SFTP** location or **Blob Storage** for the Transmission team to review and process.
+
+### Information to Confirm
+
+* What is the exact job schedule and execution frequency?
+* Which scheduler triggers the .NET application?
+* Which stored procedures and SQL queries are executed?
+* Which database objects (tables, views, procedures) are involved?
+* What is the expected output file format and naming convention?
+* Where should the generated output files be placed (SFTP or Blob Storage)?
+* What are the destination folder/path details?
+* Please provide sample input files and the corresponding expected output files.
+* Are there any configuration files or database configuration tables that need to be maintained?
+* What error handling, logging, and restart/reprocessing mechanisms are implemented if the job fails?
+
+5) ### ProcessEBRSchedule
+
+* **ProcessEBRSchedule** is used to set up the scheduling data based on **ODTs**.
+* This process is related to **SRDE** scheduling only and is **not applicable to EBR**.
+* Confirm the ODT configuration and the associated scheduling data required for the process.
+
+6) ## Statement Compliance
+
+* The **Statement Compliance** process does not require the .NET application. Only the database stored procedure needs to be executed.
+* The process performs a **daily refresh** by executing the stored procedure:
+
+  * **`ols.compliance.spr_populate_statement_compliance`**
+* In addition to the daily execution, the same stored procedure is also run on the **20th of every month** as part of the monthly processing.
+* The stored procedure is executed against the **IFR_V2** database.
+* As part of the migration, determine whether the stored procedure will be invoked directly or orchestrated through **Azure Data Factory (ADF)**.
+* Confirm the scheduling requirements, execution frequency, dependencies, and any downstream processes triggered after the stored procedure completes successfully.
+
+
