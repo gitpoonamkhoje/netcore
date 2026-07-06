@@ -159,4 +159,4 @@ by replicating and partitioning we can achieve high avalability, reliability and
 
 continuous orchitestration, failure detection, reliable message  dilevery all are internally hanlded by service fabric platform and we just have to focus on  business logic functionality
 
-
+thanks
