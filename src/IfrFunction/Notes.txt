@@ -146,4 +146,45 @@ Archive + MTB_APT metadata
 * As part of the migration, determine whether the stored procedure will be invoked directly or orchestrated through **Azure Data Factory (ADF)**.
 * Confirm the scheduling requirements, execution frequency, dependencies, and any downstream processes triggered after the stored procedure completes successfully.
 
+------------------------------------------
 
+
+UPDATE MTB_APT.JOB_SCHEDULE
+SET RunTime = '20:00:00', NextRunTimeUtc = '2026-07-10T20:00:00Z', Enabled = 1
+WHERE JobName = 'APT_TO_PDF';
+
+
+Function		Purpose
+AptToPdfScheduler	Timer every 5 min → checks JOB_SCHEDULE → runs when due
+AptToPdf 		POST /api/ifr/apt-to-pdf — manual run
+
+
+"AppResources__LegacyAptPdfExePath": "D:\\home\\site\\wwwroot\\LegacyAptToPdf.exe",
+"AppResources__LegacyAptPdfExeArguments": "\"{input}\" \"{output}\""
+
+
+Services/AptToPdf/
+  AptToPdfBlobService.cs
+  AptToPdfFileValidator.cs
+  AptToPdfConverter.cs          ← legacy exe wrapper
+  AptToPdfRepository.cs
+  AptToPdfPipelineService.cs
+  AptToPdfSchedulerService.cs
+Functions/
+  AptToPdfTimerFunction.cs
+  AptToPdfHttpFunction.cs
+Sql/AptToPdf_Schema.sql
+Models/AptToPdfModels.cs
+
+How to use
+Create blob containers (auto-created on first run)
+Upload files to input container
+Either wait for schedule, or run manually:
+POST /api/ifr/apt-to-pdf
+
+PDFs appear in output, originals in archive
+
+Note
+Existing APT/SPECTR blob/timer/HTTP paths are unchanged. This is a separate diagram-based batch pipeline. Use one primary intake path in production to avoid duplicate processing.
+
+Share the legacy exe name and command line when ready, and we can set the default LegacyAptPdfExeArguments to match.

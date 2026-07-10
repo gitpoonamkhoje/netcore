@@ -21,9 +21,27 @@ public interface IEnvironmentResources
     bool SpectrApplyTransformations { get; }
     string BlobContainerName { get; }
     int AptSpectrMaxRetryAttempts { get; }
+    bool AptToPdfEnabled { get; }
+    string AptToPdfInputContainer { get; }
+    string AptToPdfProcessingContainer { get; }
+    string AptToPdfOutputContainer { get; }
+    string AptToPdfArchiveContainer { get; }
+    string AptToPdfFailedContainer { get; }
+    string AptToPdfLogsContainer { get; }
+    string AptToPdfJobName { get; }
+    bool AptToPdfUseDatabaseScheduler { get; }
+    string AptToPdfSchedulerCron { get; }
+    int AptToPdfMaxRetries { get; }
+    bool AptToPdfMoveToFailedContainer { get; }
+    bool AptToPdfEnableDeadLetter { get; }
+    bool AptToPdfLogErrorDetails { get; }
+    string LegacyAptPdfExePath { get; }
+    string LegacyAptPdfExeArguments { get; }
+    int LegacyAptPdfTimeoutSeconds { get; }
     bool EnsureMetadataTables { get; }
 
     SqlConnection CreateIfrConnection();
     ShareClient CreateFileShareClient();
-    Azure.Storage.Blobs.BlobContainerClient CreateBlobContainerClient();
+    Azure.Storage.Blobs.BlobContainerClient CreateBlobContainerClient(string containerName);
+    Azure.Storage.Blobs.BlobServiceClient CreateBlobServiceClient();
 }

@@ -11,6 +11,10 @@
     "AppResources__SpectrApplyTransformations": "true",
     "AppResources__BlobContainerName": "ifr",
     "AppResources__AptSpectrMaxRetryAttempts": "3",
-    "AppResources__LogoSharePath": "ifr/assets/logo.png"
+    "AppResources__LogoSharePath": "ifr/assets/logo.png",
+    "AppResources__AptToPdfEnabled": "true",
+    "AppResources__AptToPdfSchedulerCron": "0 */5 * * * *",
+    "AppResources__AptToPdfMaxRetries": "3",
+    "AppResources__LegacyAptPdfExePath": ""
   }
 }

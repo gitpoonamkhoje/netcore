@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using IfrFunction.Configuration;
 using IfrFunction.Services;
+using IfrFunction.Services.AptToPdf;
 
 var host = new HostBuilder()
     .ConfigureAppConfiguration((context, config) =>
@@ -59,6 +60,13 @@ var host = new HostBuilder()
         services.AddSingleton<IAptSpectrMetadataRepository, AptSpectrMetadataRepository>();
         services.AddSingleton<IAptSpectrService, AptSpectrService>();
         services.AddSingleton<IAptSpectrBlobProcessor, AptSpectrBlobProcessor>();
+
+        services.AddSingleton<IAptToPdfBlobService, AptToPdfBlobService>();
+        services.AddSingleton<IAptToPdfFileValidator, AptToPdfFileValidator>();
+        services.AddSingleton<IAptToPdfConverter, AptToPdfConverter>();
+        services.AddSingleton<IAptToPdfRepository, AptToPdfRepository>();
+        services.AddSingleton<IAptToPdfPipelineService, AptToPdfPipelineService>();
+        services.AddSingleton<IAptToPdfSchedulerService, AptToPdfSchedulerService>();
     })
     .Build();
 

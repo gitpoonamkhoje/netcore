@@ -47,6 +47,45 @@ public sealed class AppResourcesOptions
     /// <summary>Max processing attempts before a blob is moved to the error folder.</summary>
     public int AptSpectrMaxRetryAttempts { get; init; } = 3;
 
+    // APT-to-PDF pipeline (architecture diagram)
+    public bool AptToPdfEnabled { get; init; } = true;
+
+    public string AptToPdfInputContainer { get; init; } = "input";
+
+    public string AptToPdfProcessingContainer { get; init; } = "processing";
+
+    public string AptToPdfOutputContainer { get; init; } = "output";
+
+    public string AptToPdfArchiveContainer { get; init; } = "archive";
+
+    public string AptToPdfFailedContainer { get; init; } = "failed";
+
+    public string AptToPdfLogsContainer { get; init; } = "logs";
+
+    public string AptToPdfJobName { get; init; } = "APT_TO_PDF";
+
+    /// <summary>Checks JOB_SCHEDULE in SQL before running (diagram: DB-driven scheduler).</summary>
+    public bool AptToPdfUseDatabaseScheduler { get; init; } = true;
+
+    /// <summary>Timer checks schedule every 5 minutes; job runs when NextRunTime is due.</summary>
+    public string AptToPdfSchedulerCron { get; init; } = "0 */5 * * * *";
+
+    public int AptToPdfMaxRetries { get; init; } = 3;
+
+    public bool AptToPdfMoveToFailedContainer { get; init; } = true;
+
+    public bool AptToPdfEnableDeadLetter { get; init; } = true;
+
+    public bool AptToPdfLogErrorDetails { get; init; } = true;
+
+    /// <summary>Path to legacy APT-to-PDF .exe deployed with the function app (Windows).</summary>
+    public string LegacyAptPdfExePath { get; init; } = "";
+
+    /// <summary>Argument template; {input} and {output} are replaced with file paths.</summary>
+    public string LegacyAptPdfExeArguments { get; init; } = "\"{input}\" \"{output}\"";
+
+    public int LegacyAptPdfTimeoutSeconds { get; init; } = 300;
+
     public string KeyVaultUri { get; init; } = "";
 
     public string KeyVaultManagedIdentityClientId { get; init; } = "";

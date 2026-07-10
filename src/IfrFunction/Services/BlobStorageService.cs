@@ -86,7 +86,7 @@ public sealed class BlobStorageService : IBlobStorageService
     private Azure.Storage.Blobs.BlobClient GetBlobClient(string blobPath)
     {
         var normalized = Models.AptSpectrBlobPathHelper.Normalize(blobPath);
-        return _resources.CreateBlobContainerClient().GetBlobClient(normalized);
+        return _resources.CreateBlobContainerClient(_resources.BlobContainerName).GetBlobClient(normalized);
     }
 
     private static async Task<Stream> OpenReadAsync(

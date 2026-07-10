@@ -30,12 +30,34 @@ public sealed class EnvironmentResources : IEnvironmentResources
     public bool SpectrApplyTransformations => _options.SpectrApplyTransformations;
     public string BlobContainerName => _options.BlobContainerName;
     public int AptSpectrMaxRetryAttempts => _options.AptSpectrMaxRetryAttempts;
+    public bool AptToPdfEnabled => _options.AptToPdfEnabled;
+    public string AptToPdfInputContainer => _options.AptToPdfInputContainer;
+    public string AptToPdfProcessingContainer => _options.AptToPdfProcessingContainer;
+    public string AptToPdfOutputContainer => _options.AptToPdfOutputContainer;
+    public string AptToPdfArchiveContainer => _options.AptToPdfArchiveContainer;
+    public string AptToPdfFailedContainer => _options.AptToPdfFailedContainer;
+    public string AptToPdfLogsContainer => _options.AptToPdfLogsContainer;
+    public string AptToPdfJobName => _options.AptToPdfJobName;
+    public bool AptToPdfUseDatabaseScheduler => _options.AptToPdfUseDatabaseScheduler;
+    public string AptToPdfSchedulerCron => _options.AptToPdfSchedulerCron;
+    public int AptToPdfMaxRetries => _options.AptToPdfMaxRetries;
+    public bool AptToPdfMoveToFailedContainer => _options.AptToPdfMoveToFailedContainer;
+    public bool AptToPdfEnableDeadLetter => _options.AptToPdfEnableDeadLetter;
+    public bool AptToPdfLogErrorDetails => _options.AptToPdfLogErrorDetails;
+    public string LegacyAptPdfExePath => _options.LegacyAptPdfExePath;
+    public string LegacyAptPdfExeArguments => _options.LegacyAptPdfExeArguments;
+    public int LegacyAptPdfTimeoutSeconds => _options.LegacyAptPdfTimeoutSeconds;
     public bool EnsureMetadataTables => _options.EnsureMetadataTables;
 
     public SqlConnection CreateIfrConnection() => new(IfrSqlConnectionString);
 
     public ShareClient CreateFileShareClient() => new(AzureWebJobsStorage, FileShareName);
 
+    public BlobServiceClient CreateBlobServiceClient() => new(AzureWebJobsStorage);
+
+    public BlobContainerClient CreateBlobContainerClient(string containerName) =>
+        CreateBlobServiceClient().GetBlobContainerClient(containerName);
+
     public BlobContainerClient CreateBlobContainerClient() =>
-        new BlobServiceClient(AzureWebJobsStorage).GetBlobContainerClient(BlobContainerName);
+        CreateBlobContainerClient(_options.BlobContainerName);
 }
