@@ -188,3 +188,234 @@ Note
 Existing APT/SPECTR blob/timer/HTTP paths are unchanged. This is a separate diagram-based batch pipeline. Use one primary intake path in production to avoid duplicate processing.
 
 Share the legacy exe name and command line when ready, and we can set the default LegacyAptPdfExeArguments to match.
+
+
+
+=========================================================================IMP ===========================
+***) angular project packages and functionaing
+
+
+Recommended migration approach
+Phase 1 – Get the project running first (Don't upgrade anything)
+1. Take the latest code
+git pull
+or clone the repository.
+
+2. Check the project versions
+
+Open: package.json
+
+Look for:
+"dependencies": {
+   "@angular/core": "^20.x.x"
+}
+Also check for:
+"engines": {
+   "node": ">=22"
+}
+If there is no engines section, ask the team which Node version they use, or check the project documentation.
+
+3. Install the required Node.js version
+If the project says Node 22:
+Install Node 22.
+If it says Node 20:
+Install Node 20.
+
+Don't guess.
+4. Install packages
+npm install
+5. Run
+ng serve
+
+or
+
+npm start
+6. Make sure it works
+
+This is very important.
+
+Don't upgrade anything until the application runs successfully.
+
+-----------------------------------------------------------------------------
+
+Phase 2 – Upgrade Node.js (if needed)
+Once the project is working:
+Install Node.js 22 (if that's your target).
+
+Verify:
+node -v
+Update packages if needed:
+npm install
+
+If there are dependency issues:
+npm update
+or update individual packages after checking compatibility.
+
+Run:
+ng build
+
+Fix any compilation errors.
+Run:
+ng serve
+Fix runtime issues.
+
+Phase 3 – Commit
+Once everything works:
+
+git add .
+git commit -m "Upgrade project to Node.js 22 compatibility"
+git push
+
+--------------------------------
+
+
+Option 2: NVM for Windows (Recommended for developers)
+
+If you'll work on multiple Angular projects (some requiring Node 20, others Node 22), use NVM for Windows.
+
+With NVM you can switch versions easily:
+
+nvm install 20.19.4
+nvm use 20.19.4
+
+Later, if another project needs Node 22:
+
+nvm install 22.16.0
+nvm use 22.16.0
+
+*))  If you'll work on multiple Angular/Node projects
+✅ Install NVM for Windows once.
+Then manage Node versions with nvm install and nvm use.
+
+Where to install NVM?
+Just run the NVM installer once. It installs to locations like:
+C:\Program Files\nvm\
+or
+C:\Users\<YourUser>\AppData\Roaming\nvm\
+
+depending on the installer and the options you choose.
+
+--------------------------------
+
+Install NVM (once)
+        ↓
+Install Node.js 20 (once)
+        ↓
+git clone / git pull
+        ↓
+cd YourProject
+        ↓
+npm install
+        ↓
+ng serve
+
+
+✅ Install NVM.
+✅ Install Node.js 20.
+
+✅ Verify:
+
+node -v
+npm -v
+✅ Take the latest code (git pull or clone).
+✅ Go into the project folder.
+
+✅ Run:
+
+npm install
+
+✅ Run:
+
+ng serve
+
+=================================================
+
+IMPORTANT
+
+Workflow you'll use most often
+Once NVM is installed, your day-to-day commands are typically: 
+# Select the Node version required by the project
+nvm use 20
+
+# Go to the project
+cd YourAngularProject
+
+# Get the latest code
+git pull
+
+# Install dependencies (only when needed)
+npm install
+
+# Run the app
+ng serve
+ 
+✅OR
+
+for a project that requires Node 22:
+
+nvm use 22
+cd YourAngularProject
+git pull
+npm install
+ng serve
+
+==============================================================
+
+JUST FYI >>
+
+npm -v
+npm install -g @angular/cli@20
+ng version
+
+
+git clone https://github.com/<organization>/<repository>.git
+cd <repository>
+git checkout main
+git pull origin main
+Step 4: Check Angular Version
+package.json
+check for below >>
+"dependencies": {
+  "@angular/core": "^20.x.x"
+}	
+Step 5: Install Packages
+npm install
+
+
+Step 6: Restore Fresh Packages (Optional)
+
+If packages become corrupted:
+
+Delete:node_modules
+
+Delete:package-lock.json
+
+Then:npm install
+
+Step 7: Build the Application
+
+Development build:
+
+ng build
+
+-----------------------------
+Check build command >>
+Method 1: Check angular.json (Most Important)
+Open:angular.json, search >> "configurations"
+
+you will see configuration based on env SO
+
+Method 4: Check the Build Scripts >> package.json, seacrch for >> "scripts"
+look for below >>
+"scripts": {
+  "start": "ng serve",
+  "build": "ng build",
+  "build:dev": "ng build --configuration development",
+  "build:qa": "ng build --configuration qa",
+  "build:uat": "ng build --configuration uat",
+  "build:prod": "ng build --configuration production"
+}
+
+Then you can build with:
+npm run build:qa OR npm run build:uat
+
