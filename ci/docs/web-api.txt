@@ -55,6 +55,13 @@ https://www.c-sharpcorner.com/article/api-versioning-in-asp-net-core-web-api/
 https://www.infoworld.com/article/3671870/how-to-version-minimal-apis-in-aspnet-core-6.html
 
 https://blog.christian-schou.dk/how-to-use-api-versioning-in-net-core-web-api/
+Storage Connection String
+
+Format:
+
+
+AccountName=<qJkLYuchg3Doa1myePZNjQ2YyXJlBDU+AStLN7yJw>;
+Account=<YOUR_MgbSa5loF9T62XXwhsOZPCjYXP8f1nZa8Tt0fcOV70_>;
 
 
 *)
