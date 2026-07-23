@@ -167,3 +167,141 @@ by replicating and partitioning we can achieve high avalability, reliability and
 continuous orchitestration, failure detection, reliable message  dilevery all are internally hanlded by service fabric platform and we just have to focus on  business logic functionality
 
 thanks
+
+-----------------------------------------------ADF ACIVITY IMPROVEMENT-------------------------
+
+Strong improvement areas when SQL Agent finishes in ~3h but the ADF version takes ~6h:
+
+1. Parallelism (usually the biggest win)
+SQL Agent often ran many jobs at once. ADF often runs steps one after another.
+
+Raise ForEach batch count (e.g. 20–50, not 1)
+Avoid isSequential: true unless required
+Split independent work into parallel branches / Execute Pipeline in parallel
+
+2. Integration Runtime capacity
+ADF is capped by IR size/nodes.
+Scale up Azure IR (Core count / Time to live)
+For on-prem data: more Self-Hosted IR nodes
+Watch IR queue time vs activity runtime in Monitor
+
+3. Too many small activities
+Each ADF activity has startup overhead. SQL Agent did more inside one step.
+
+Combine tiny Copy/Lookup/Script steps
+Prefer one Copy with multiple files over hundreds of single-file Copies
+Reduce “Lookup → If → small Copy” chains
+
+4. Polling / Wait patterns
+Waits and “check every N seconds” loops inflate duration.
+
+Shorten wait intervals where safe
+Prefer event/trigger-based starts over long Until loops
+Don’t keep the parent pipeline open for the full poll window if work is already handed off
+
+5. Concurrency limits on shared resources
+Low caps on SQL / file / pipeline concurrency serialize the whole run.
+
+Increase controlled concurrency (jobs, pipelines, DB sessions)
+Ensure child pipelines don’t wait on the same lock/table/file share bottleneck
+
+6. Data movement design
+Same region for ADF, storage, and SQL (cross-region doubles time)
+Use staging / PolyBase / COPY INTO for large SQL loads where possible
+Right-size DIUs on Copy; avoid under-provisioned throughput
+
+7. Retry and timeout settings
+Aggressive retries can silently double runtime.
+Lower unnecessary retries
+Tune timeouts so failures fail fast instead of hanging
+Fix root flaky connections instead of “retry forever”
+
+8. Orchestration anti-patterns
+Parent waits for every child end-to-end (fan-in) when children could run fire-and-forget or in waves
+One giant pipeline instead of parallel child pipelines
+Overuse of Get Metadata + Filter in loops
+
+9. Measure before changing
+In ADF Monitor, split total time into:
+Queue / IR wait
+Activity runtime
+Wait/Until time
+Retry time
+Whatever is largest is the first fix.
+
+Priority order to cut 6h → ~3h:
+1) parallelism → 2) IR scale → 3) remove waits/serialization → 4) fewer/chunkier activities → 5) data locality & Copy tuning.
+
+
+*) ANOTHER APPROCH
+
+
+| Priority | Quick Fix                                                                          | Typical Gain |
+| -------- | ---------------------------------------------------------------------------------- | ------------ |
+| ⭐⭐⭐⭐⭐    | Run independent ADF activities in **parallel** instead of sequentially             | 30–50%       |
+| ⭐⭐⭐⭐⭐    | Reduce the number of **Lookup**, **Set Variable**, and **If Condition** activities | 10–20%       |
+| ⭐⭐⭐⭐⭐    | Combine multiple **Stored Procedure** calls into fewer calls                       | 15–40%       |
+| ⭐⭐⭐⭐     | Increase **Copy Activity DIUs** (Data Integration Units)                           | 20–40%       |
+| ⭐⭐⭐⭐     | Increase **ForEach Batch Count** (e.g., 10–20) if iterations are independent       | 20–50%       |
+| ⭐⭐⭐⭐     | Use **Azure SQL** for heavy transformations instead of Azure Functions             | 20–60%       |
+| ⭐⭐⭐⭐     | Remove unnecessary waits and retries                                               | 5–15%        |
+| ⭐⭐⭐      | Reuse database connections inside Azure Functions                                  | 10–20%       |
+| ⭐⭐⭐      | Compress large files before transfer (where appropriate)                           | 10–30%       |
+
+
+Top 5 Quick Fixes
+1. Enable Parallel Execution
+2. Increase ForEach Concurrency
+3. Increase Copy Activity Performance
+4. Reduce Pipeline Activities
+5. Push Logic into SQL
+
+*) THIRD APPROACH
+
+
+1. Azure SQL Database SKU ⭐⭐⭐⭐⭐
+
+Many migrations keep the same SQL but move to a smaller Azure SQL tier.
+
+Check:
+CPU %
+DTU/vCore utilization
+IO %
+Memory pressure
+If CPU is consistently above 80%, consider scaling the database.
+
+A common issue is a SHIR VM with only 2 vCPUs and 8 GB RAM, which becomes a bottleneck.
+
+3. Network Latency
+
+4) Azure Region
+Ensure these resources are in the same Azure region:
+Azure SQL
+Storage Account
+Function App
+ADF Integration Runtime
+
+Cross-region traffic increases latency.
+
+5) Ensure these resources are in the same Azure region:
+Azure SQL
+Storage Account
+Function App
+ADF Integration Runtime
+Cross-region traffic increases latency.
+
+6. Storage Account Type
+Check if you're using:
+Standard HDD
+Standard SSD
+Premium
+
+7. Integration Runtime
+For Copy Activities:
+Increase DIUs (Data Integration Units).
+If using SHIR, consider scaling out with multiple nodes.
+
+8. Function App Hosting Plan
+Consumption Plan:
+Cold starts
+Limited CPU
