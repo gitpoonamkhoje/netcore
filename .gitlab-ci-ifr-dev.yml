@@ -1,0 +1,179 @@
+# IfrFunction — GitLab CI/CD for DEV
+# Based on: ci/docs/template_ci_cd_tobeconsidered.txt
+# Include pattern: ci/docs/current_ci_cd_template_include.txt
+#
+# GitLab → Settings → CI/CD → CI/CD configuration file:
+#   .gitlab-ci-ifr-dev.yml
+#
+# MANDATORY: set all variables in GitLab → Settings → CI/CD → Variables
+# (environment scope = dev). See ci/gitlab-variables-ifr-dev.env.example
+#
+# Pipeline:
+#   validate_dev_variables  → fail fast if required CI/CD vars are missing
+#   build_package           → corporate .build_package template
+#   dev_deploy              → corporate .deploy_azure_dev template
+#   dev_set_app_settings    → apply Function App settings (mandatory)
+
+include:
+  - project: "1/dotnet-core"
+    ref: 13.3.0
+    file: "main.yml"
+
+variables:
+  # --- GENERAL (template) ---
+  PKG: ifr-function
+  APP_CODE_NAME: "IFR"
+  APP_CODE: "IFR"
+  VERACODE_BUCKET: "IFR-Function-App"
+  PROJECT_LANGUAGE: "dotnet_core"
+  PROJECT_PLATFORM: "azure"
+  RUNNER_TAG: cicd-aks-dev
+  BAR_REGISTRY: artifactory-saas.mtb.com
+
+  # --- BUILD (template + IfrFunction) ---
+  SOLUTION_PATH: "./src/IfrFunction/IfrFunction.csproj"
+  PROJECT_FILE: IfrFunction.csproj
+  OUTPUT_PATH: "./publish"
+  BUILD_OPTIONS: "-c Release -r linux-x64 --self-contained false"
+  COMPILER_VERSION: mtb-ubi8-dotnet80:0.3.70
+  APPLY_MIGRATE_DB_IMAGE: "mtb-ubi8-az-dotnet60-sdk:latest"
+  BUILD_OUTPUT_ARTIFACT: output
+  NUGET_CONFIG_PATH: "/tmp/DOTNET_CLI_HOME/.nuget/NuGet/NuGet.Config"
+  LOCAL_ARTIFACT_NAME: ${PKG}-${CI_COMMIT_SHORT_SHA}.zip
+  LOCAL_VERACODE_ARTIFACT_NAME: veracode-${PKG}-${CI_COMMIT_SHORT_SHA}.zip
+  DEFAULT_VERACODE_FILE_LIST: "."
+
+  # --- DEPLOY DEV (mandatory GitLab CI/CD variables; do not hardcode secrets) ---
+  AZURE_FUNCTIONS_ENVIRONMENT: "Development"
+  APP_ENVIRONMENT_CODE: "Dev"
+  APPRESOURCES_APP_ENVIRONMENT_CODE: "Dev"
+  FUNCTIONS_WORKER_RUNTIME: "dotnet-isolated"
+  HEALTH_ENDPOINT: ""
+  APP_TYPE: functionapp
+  DEPLOYMENT_SLOT: main
+  APP_SERVICE: ${IFR_FUNCTION_APP_NAME}
+  RESOURCE_GROUP: ${AZURE_RESOURCE_GROUP_NAME}
+  TARGET_PATH: D:\inetpub\wwwroot\${PKG}\dotnet
+  WORKING_DIRECTORY: "D:\\inetpub\\wwwroot\\"
+
+# -----------------------------------------------------------------------------
+# 1) Fail the pipeline if mandatory GitLab CI/CD variables are not set
+# -----------------------------------------------------------------------------
+validate_dev_variables:
+  stage: build
+  tags: ["${RUNNER_TAG}"]
+  image:
+    name: ${BAR_REGISTRY}/mtb-docker/${COMPILER_VERSION}
+    entrypoint: [""]
+  script:
+    - chmod +x ci/validate-ifr-dev-variables.sh ci/set-ifr-function-app-settings.sh
+    - bash ci/validate-ifr-dev-variables.sh
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "web"
+  retry: 1
+  allow_failure: false
+
+# -----------------------------------------------------------------------------
+# 2) Build + publish (corporate .build_package)
+# -----------------------------------------------------------------------------
+build_package:
+  extends: .build_package
+  needs:
+    - validate_dev_variables
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "web"
+  before_script:
+    - echo "NUGET_CONFIG_PATH=$NUGET_CONFIG_PATH"
+    - mkdir -p $(dirname ${NUGET_CONFIG_PATH})
+    - cp ${NUGET_AUTH} ${NUGET_CONFIG_PATH}
+    - echo "COMPILER_VERSION=[$COMPILER_VERSION]"
+    - echo "SOLUTION_PATH=[$SOLUTION_PATH]"
+    - echo "AZURE_FUNCTIONS_ENVIRONMENT=[$AZURE_FUNCTIONS_ENVIRONMENT]"
+    - echo "APP_SERVICE=[$APP_SERVICE]"
+    - echo "RESOURCE_GROUP=[$RESOURCE_GROUP]"
+    - dotnet --info
+
+# -----------------------------------------------------------------------------
+# 3) Deploy Function App to DEV (corporate .deploy_azure_dev)
+# -----------------------------------------------------------------------------
+dev_deploy:
+  extends: .deploy_azure_dev
+  environment:
+    name: dev
+  variables:
+    AZURE_FUNCTIONS_ENVIRONMENT: "Development"
+    APP_ENVIRONMENT_CODE: "Dev"
+    DEPLOYMENT_SLOT: main
+    APP_TYPE: functionapp
+    APP_SERVICE: ${IFR_FUNCTION_APP_NAME}
+    RESOURCE_GROUP: ${AZURE_RESOURCE_GROUP_NAME}
+  needs:
+    - validate_dev_variables
+    - build_package
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+  allow_failure: false
+
+# -----------------------------------------------------------------------------
+# 4) Apply Function App settings from GitLab CI/CD Variables (MANDATORY)
+# -----------------------------------------------------------------------------
+dev_set_app_settings:
+  stage: deploy
+  tags: ["${RUNNER_TAG}"]
+  environment:
+    name: dev
+  image:
+    name: ${BAR_REGISTRY}/mtb-docker-ga/${APPLY_MIGRATE_DB_IMAGE}
+    entrypoint: [""]
+  variables:
+    JOB_TOOL: azure
+    JOB_FUNCTION: set_app_settings
+    PROJECT_PLATFORM: "azure"
+    AZURE_FUNCTION_APP_NAME: ${IFR_FUNCTION_APP_NAME}
+    AZURE_RESOURCE_GROUP_NAME: ${AZURE_RESOURCE_GROUP_NAME}
+    AZURE_FUNCTIONS_ENVIRONMENT: "Development"
+    APP_ENVIRONMENT_CODE: "Dev"
+    APPRESOURCES_APP_ENVIRONMENT_CODE: "Dev"
+    FUNCTIONS_WORKER_RUNTIME: "dotnet-isolated"
+  needs:
+    - job: dev_deploy
+      artifacts: false
+  script:
+    - chmod +x ci/validate-ifr-dev-variables.sh ci/set-ifr-function-app-settings.sh
+    - bash ci/validate-ifr-dev-variables.sh
+    - |
+      az login --service-principal \
+        --tenant "${ARM_TENANT_ID:-$AZURE_TENANT_ID}" \
+        --username "${ARM_CLIENT_ID:-$AZURE_CLIENT_ID}" \
+        --password "${ARM_CLIENT_SECRET:-$AZURE_CLIENT_SECRET}"
+      az account set -s "${ARM_SUBSCRIPTION_ID:-$AZURE_SUBSCRIPTION_ID}"
+    - bash ci/set-ifr-function-app-settings.sh
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+  retry: 1
+  allow_failure: false
+
+# Optional publish jobs from corporate template
+veracode_upload:
+  extends: .veracode_artifactory_upload
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "dev"
+
+artifactory_upload:
+  extends: .artifactory_upload
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "dev"

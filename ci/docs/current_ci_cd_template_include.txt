@@ -1,0 +1,111 @@
+NOW I HAVE INCLUDED THIS TEMPLATE TO DO CI/CD FOR MY AZURE FUNCTION APP: 
+
+include:
+
+  - project: "1/dotnet-core"
+
+    ref: 13.3.0
+
+    file: "main.yml"
+
+ 
+
+variables:
+
+  #GENERAL
+
+  PKG: ods-fap
+
+  APP_CODE_NAME: "ODS"
+
+  APP_CODE: "ODS"
+
+  VERACODE_BUCKET: "ODS-Function-App"
+
+  #BUILD
+
+  BUILD_OPTIONS: -c Release -r linux-x64 --self-contained false
+
+  SOLUTION_PATH: "./AzureCode/ods-fap/ods-fap/ods-fap.csproj"
+
+  PROJECT_FILE: ods-fap.csproj
+
+  OUTPUT_PATH: "./publish"
+
+  #COMPILER_VERSION: mtb-ubi8-dotnet10-runtime
+
+  #COMPILER_VERSION: mtb-ubi9-dotnet80:0.3.70
+
+  COMPILER_VERSION:  mtb-ubi8-dotnet10-sdk:0.3.8
+
+  #COMPILER_VERSION_DOTNET:  mtb-ubi8-dotnet10-sdk:0.3.8
+
+  BUILD_OUTPUT_ARTIFACT: output
+
+  NUGET_CONFIG_PATH: "/tmp/DOTNET_CLI_HOME/.nuget/NuGet/NuGet.Config"
+
+  RUNNER_TAG: cicd-aks-dev
+
+  #DEPLOY
+
+  HEALTH_ENDPOINT: ""
+
+  WORKING_DIRECTORY: "D:\\inetpub\\wwwroot\\"
+
+  TARGET_PATH: D:\inetpub\wwwroot\${PKG}\dotnet
+
+ 
+
+build_package:
+
+  extends: .build_package
+
+  rules:
+
+    - when: always
+
+  before_script:
+
+    - echo "NUGET_AUTH=[$NUGET_AUTH]"
+
+    - echo "NUGET_CONFIG_PATH=$NUGET_CONFIG_PATH"
+
+    - ls -la /tmp
+
+    - mkdir -p $(dirname ${NUGET_CONFIG_PATH})
+
+    - cp ${NUGET_AUTH} ${NUGET_CONFIG_PATH}
+
+    - ls -la $(dirname ${NUGET_CONFIG_PATH})
+
+    - dotnet --info
+
+    - echo "COMPILER_VERSION=[$COMPILER_VERSION]"
+
+    - dotnet --info  
+
+ 
+
+dev_deploy:
+
+  extends: .deploy_azure_dev
+
+  variables:
+
+    AZURE_FUNCTIONS_ENVIRONMENT: "Development"
+
+    DEPLOYMENT_SLOT: main
+
+    APP_TYPE: functionapp
+
+    APP_SERVICE:
+
+    RESOURCE_GROUP: -01
+
+  needs:
+
+    - build_package
+
+  rules:
+
+    - when: manual

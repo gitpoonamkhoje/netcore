@@ -1,0 +1,593 @@
+build_dotnet_core_template.yml AS BELOW
+
+ 
+
+.build:
+
+  stage: build
+
+  tags: ["${RUNNER_TAG}"]
+
+  image:
+
+    name: ${BAR_REGISTRY}/mtb-docker/${COMPILER_VERSION}
+
+    entrypoint: [""]
+
+  variables:
+
+    JOB_TOOL: dotnet
+
+    JOB_FUNCTION: build
+
+    JOB_IS_REQUIRED: "true"
+
+    PROJECT_PLATFORM: "not_relevant"
+
+  script:
+
+    - !reference [.pipeline_scripts_linux, script]
+
+    - !reference [.veracode_zip_list, script]
+
+    - cp ${NUGET_AUTH} ${NUGET_CONFIG_PATH}
+
+    - mkdir -p ${OUTPUT_PATH}
+
+    - dotnet publish ${SOLUTION_PATH} ${BUILD_OPTIONS} -o ${OUTPUT_PATH}
+
+    # Build output
+
+    - cd ${OUTPUT_PATH} && zip -r ${LOCAL_ARTIFACT_NAME} .
+
+    - mv "${CI_PROJECT_DIR}/${OUTPUT_PATH}/${LOCAL_ARTIFACT_NAME}" "${CI_PROJECT_DIR}/"
+
+    # Script to set which files get packaged for Veracode.  If the VERACODE_FILE_LIST file type
+
+    # variable is not set in the project repo, then it will default to '.' to load all files
+
+    - log info "Following files added to Veracode upload - ${ITEM_LIST}"
+
+    - zip -q -r ${LOCAL_VERACODE_ARTIFACT_NAME} ${ITEM_LIST}
+
+    - mv "${CI_PROJECT_DIR}/${OUTPUT_PATH}/${LOCAL_VERACODE_ARTIFACT_NAME}" "${CI_PROJECT_DIR}/"
+
+ 
+
+  artifacts:
+
+    expire_in: 4 hour
+
+    paths:
+
+      # - veracode_upload-${PKG}-${CI_COMMIT_SHORT_SHA}.zip
+
+      - ${LOCAL_ARTIFACT_NAME}
+
+      - ${LOCAL_VERACODE_ARTIFACT_NAME}
+
+ 
+
+  retry: !reference [.retry_rules]
+
+ 
+
+.build_package:
+
+  extends: .build
+
+  rules:
+
+    - !reference [.all_environment_rules, rules]
+
+ 
+---------------------------------------------------------------------------------------------------------------
+ 
+
+ef_migrations.yml AS BELOW:
+
+# Generate a db migration
+
+.generate_migrate_db_template:
+
+  image: ${BAR_REGISTRY}/mtb-docker-ga/${GENERATE_MIGRATE_DB_IMAGE}
+
+  stage: build
+
+  variables:
+
+    JOB_TOOL: db_migration
+
+    JOB_FUNCTION: ef_migrations
+
+    PROJECT_PLATFORM: "not_relevant"
+
+  tags:
+
+    - 'cicd-k8s'
+
+  script:
+
+    - !reference [.pipeline_scripts_linux, script]
+
+    - cp ${NUGET_AUTH} ${NUGET_CONFIG_PATH}
+
+    - dotnet ef migrations script --project ${PROJECT_FILE} --output ${MIGRATION_FILE_NAME} --idempotent ${VERBOSITY_LEVEL} --context ${CONTEXT}
+
+    - curl -u ${BAR_USER}:${BAR_TOKEN} -X PUT "${SQL_ARTIFACT_PATH}" -T ${MIGRATION_FILE_NAME}
+
+  artifacts:
+
+    expire_in: 1 week
+
+    paths:
+
+      - ${MIGRATION_FILE_NAME}
+
+  rules:
+
+    - !reference [.all_environment_rules, rules]
+
+  retry: !reference [.retry_rules]
+
+ 
+
+# Apply the migration
+
+.apply_cloud_migrate_template:
+
+  image: ${BAR_REGISTRY}/mtb-docker-ga/${APPLY_MIGRATE_DB_IMAGE}
+
+  stage: migrate_db
+
+  tags:
+
+    - 'cicd-k8s'
+
+  variables:
+
+    JOB_TOOL: db_migration
+
+    JOB_FUNCTION: ef_migrations
+
+    PROJECT_PLATFORM: "azure"
+
+  # This may be able to be combined (maybe using some logic to check if it's a cloud db) but if I remember right,
+
+  # the cli wouldn't remember the context for the az login so we daisy chained the command
+
+  script:
+
+    - !reference [.pipeline_scripts_linux, script]
+
+    - cp ${NUGET_AUTH} ${NUGET_CONFIG_PATH}
+
+    - |
+
+      az login --service-principal --tenant "${ARM_TENANT_ID}" --username "${ARM_CLIENT_ID}" --password "${ARM_CLIENT_SECRET}"
+
+      az account set -s ${ARM_SUBSCRIPTION_ID}
+
+      dotnet ef database update --project ${PROJECT_FILE} ${VERBOSITY_LEVEL} --connection "${CONNECTION_STR}"
+
+  retry: !reference [.retry_rules]
+
+ 
+
+.dev_apply_cloud_migrate_db:
+
+  extends: .apply_cloud_migrate_template
+
+  environment: dev
+
+  rules:
+
+    - !reference [.lower_environment_rules, rules]
+
+  when: manual
+
+ 
+
+ 
+
+.cert_apply_cloud_migrate_db:
+
+  extends: .apply_cloud_migrate_template
+
+  environment: cert
+
+  rules:
+
+    - !reference [.higher_environment_rules, rules]
+
+  when: manual
+
+ 
+
+.prod_apply_cloud_migrate_db:
+
+  extends: .apply_cloud_migrate_template
+
+  environment: prod
+
+  rules:
+
+    - !reference [.higher_environment_rules, rules]
+
+  when: manual
+
+ 
+
+ 
+
+ ----------------------------------------------------------------------------------------------------
+
+ 
+
+VARS AS BELOW:
+
+variables:
+
+  RUNNER_TAG: "cicd-k8s"
+
+  BAR_REGISTRY: artifactory-saas.mtb.com
+
+  OUTPUT_PATH: "~/${PKG}/build"
+
+  IMAGE_TAG: ${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}
+
+  BUILD_OPTIONS: "-c Release -r win-x64"
+
+  LOCAL_ARTIFACT_NAME: ${PKG}-${CI_COMMIT_SHORT_SHA}.zip
+
+  REMOTE_ARTIFACT_NAME: ${PKG}-${CI_COMMIT_SHORT_SHA}.zip
+
+  LOCAL_VERACODE_ARTIFACT_NAME: veracode-${PKG}-${CI_COMMIT_SHORT_SHA}.zip
+
+  REMOTE_VERACODE_ARTIFACT_NAME: veracode-${PKG}-${CI_COMMIT_SHORT_SHA}.zip
+
+  DEV_ARTIFACT_URL: https://${BAR_REGISTRY}/artifactory/${DEV_ARTIFACTORY_REPO}/${REMOTE_ARTIFACT_NAME}
+
+  PROD_ARTIFACT_URL: https://${BAR_REGISTRY}/artifactory/${PROD_ARTIFACTORY_REPO}/${REMOTE_ARTIFACT_NAME}
+
+  DEV_VERACODE_ARTIFACT_URL: https://${BAR_REGISTRY}/artifactory/${DEV_ARTIFACTORY_REPO}/${REMOTE_VERACODE_ARTIFACT_NAME}
+
+  PROD_VERACODE_ARTIFACT_URL: https://${BAR_REGISTRY}/artifactory/${PROD_ARTIFACTORY_REPO}/${REMOTE_VERACODE_ARTIFACT_NAME}
+
+  MIGRATION_FILE_NAME: migration-full-${CI_COMMIT_SHORT_SHA}.sql
+
+  SQL_ARTIFACT_PATH: https://${BAR_REGISTRY}:443/artifactory/${DEV_GENERIC_REPO}/${MIGRATION_FILE_NAME}
+
+  CONNECTION_STR: "Data Source=${SQL_SERVER}; Initial Catalog=${SQL_DB}; Authentication=Active Directory Default; Encrypt=True;"
+
+  URL_NAME: https://${BAR_REGISTRY}:443/artifactory/${DEV_ARTIFACTORY_REPO}/${PKG}-${CI_COMMIT_SHORT_SHA}.zip
+
+  TARGET_PATH: D:\inetpub\wwwroot\${APP_CODE_NAME}\dotnet
+
+  VERBOSITY_LEVEL: "-v"
+
+  GENERATE_MIGRATE_DB_IMAGE: "mtb-ubi8-dotnet60-sdk-tools:latest"
+
+  APPLY_MIGRATE_DB_IMAGE: "mtb-ubi8-az-dotnet60-sdk:latest"
+
+  PROJECT_LANGUAGE: "dotnet_core"
+
+  DEFAULT_VERACODE_FILE_LIST: "."
+
+  NUGET_CONFIG_PATH: "/tmp/DOTNET_CLI_HOME/.nuget/NuGet/NuGet.Config"
+
+ 
+
+Main
+
+ 
+
+spec:
+
+  inputs:
+
+    SCANS_TAG:
+
+      description: Ref for scans
+
+      default: 12.0.0
+
+    DEPLOY_TAG:
+
+      description: Ref for deploy
+
+      default: 11.4.1
+
+    UTILITIES_TAG:
+
+      description: Ref for utilities
+
+      default: 11.7.0
+
+    LINT_TAG:
+
+      description: Ref for lint
+
+      default: 11.4.0
+
+    UNIT_TEST_TAG:
+
+      description: Ref for unit test
+
+      default: 12.1.0
+
+    KANIKO_TAG:
+
+      description: Ref for kaniko
+
+      default: 11.4.1
+
+    FUNCTION_TAG:
+
+      description: Ref for function-app
+
+      default: 13.1.0
+
+---
+
+include:
+
+  - local: "Build/*.yml"
+
+  - local: "Tools/*.yml"
+
+  - local: "vars/*.yml"
+
+ 
+
+  - project: "mandtbank/mtb/satirical_jokers/mushroom-kingdom/kaniko"
+
+    ref: $[[ inputs.KANIKO_TAG ]]
+
+    file:
+
+      - "dotnet_core_build.yml"
+
+ 
+
+  - project: "mandtbank/mtb/satirical_jokers/mushroom-kingdom/function-app"
+
+    ref: $[[ inputs.FUNCTION_TAG ]]
+
+    file:
+
+      - "dotnet_core_build.yml"
+
+ 
+
+  - project: "mandtbank/mtb/satirical_jokers/mushroom-kingdom/scans"
+
+    ref: $[[ inputs.SCANS_TAG ]]
+
+    file:
+
+      - "sast_scan.yml"
+
+      - "policy_scan.yml"
+
+      - "sandbox_scan.yml"
+
+      - "dast_scan.yml"
+
+      - "aqua_scan.yml"
+
+      - "acs_scan.yml"
+
+ 
+
+  - project: "mandtbank/mtb/satirical_jokers/mushroom-kingdom/deploy"
+
+    ref: $[[ inputs.DEPLOY_TAG ]]
+
+    file:
+
+      - "deploy_windows_iis.yml"
+
+      - "deploy_windows_iis_winrm.yml"
+
+      - "deploy_azure.yml"
+
+      - "deploy_rhel_apache.yml"
+
+      - "deploy_ose.yml"
+
+ 
+
+  - project: "mandtbank/mtb/satirical_jokers/mushroom-kingdom/utilities"
+
+    ref: $[[ inputs.UTILITIES_TAG ]]
+
+    file:
+
+      - "artifactory_zip_template.yml"
+
+      - "stages.yml"
+
+      - "rebuild.yml"
+
+      - "rules.yml"
+
+      - "retry.yml"
+
+      - "cypress.yml"
+
+      - "playwright.yml"
+
+      - "metrics.yml"
+
+      - "scripts.yml"
+
+      - "npm_auth.yml"
+
+      - "ose_scale.yml"
+
+      - "ose_rollout.yml"
+
+      - "ose_rollback.yml"
+
+      - "helm_uninstall.yml"
+
+      - "dependencies.yml"
+
+      - "version_tag.yml"
+
+      - "logging.yml"
+
+      - "release_update.yml"
+
+      - "http_client.yml"
+
+ 
+
+  - project: "mandtbank/mtb/satirical_jokers/mushroom-kingdom/unit-test"
+
+    ref: $[[ inputs.UNIT_TEST_TAG ]]
+
+    file:
+
+      - "nunit.yml"
+
+      - "junit.yml"
+
+ 
+
+  - project: "mandtbank/mtb/satirical_jokers/mushroom-kingdom/lint"
+
+    ref: $[[ inputs.LINT_TAG ]]
+
+    file:
+
+      - "dotnet_format.yml"
+
+      - "sonarqube.yml"
+
+      - "yamllint.yml"
+
+      - "markdownlint.yml"
+
+      - "stylelint.yml"
+
+ 
+
+  - project: "mandtbank/mtb/satirical_jokers/mushroom-kingdom/latest-version-check"
+
+    ref: feature-main
+
+    file:
+
+      - "latest_tags.yml"
+
+ 
+
+# Publish
+
+veracode_upload:
+
+  extends: .veracode_artifactory_upload
+
+artifactory_upload:
+
+  extends: .artifactory_upload
+
+ 
+
+sast_scan:
+
+  extends: .sast_scan
+
+ 
+
+policy_scan:
+
+  extends: .policy_scan
+
+ 
+
+dast_scan_dev:
+
+  extends: .dast_scan_dev
+
+ 
+
+dast_scan_cert:
+
+  extends: .dast_scan_cert
+
+ 
+
+dast_scan_prod:
+
+  extends: .dast_scan_prod
+
+ 
+
+# Aqua scan SaaS
+
+aqua_scan_saas_dev:
+
+  extends: .scan_image_saas_dev
+
+  variables:
+
+    REQUIRE_AQUA_SCAN: "false"
+
+ 
+
+aqua_scan_saas_cert:
+
+  extends: .scan_image_saas_cert
+
+  variables:
+
+    REQUIRE_AQUA_SCAN: "false"
+
+ 
+
+aqua_scan_saas_prod:
+
+  extends: .scan_image_saas_prod
+
+  variables:
+
+    REQUIRE_AQUA_SCAN: "false"
+
+ 
+
+aqua_scan_saas_proddr:
+
+  extends: .scan_image_saas_proddr
+
+  variables:
+
+    REQUIRE_AQUA_SCAN: "false"
+
+ 
+
+# Advanced Cluster Security Scan
+
+acs_scan_dev:
+
+  extends: .acs_scan_dev
+
+ 
+
+acs_scan_cert:
+
+  extends: .acs_scan_cert
+
+ 
+
+acs_scan_prod:
+
+  extends: .acs_scan_prod
+
+ 
+
+acs_scan_proddr:
+
+  extends: .acs_scan_proddr

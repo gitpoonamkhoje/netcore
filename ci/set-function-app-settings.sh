@@ -56,6 +56,12 @@ add_setting "AppResources__DdlSharePath" "${APPRESOURCES_DDL_SHARE_PATH:-}"
 add_setting "AppResources__BackupSharePath" "${APPRESOURCES_BACKUP_SHARE_PATH:-}"
 add_setting "AppResources__UnzipSharePath" "${APPRESOURCES_UNZIP_SHARE_PATH:-}"
 
+# IfrFunction
+add_setting "AppResources__IfrSqlConnectionString" "${APPRESOURCES_IFR_SQL_CONNECTION_STRING:-}"
+add_setting "AppResources__BlobContainerName" "${APPRESOURCES_BLOB_CONTAINER_NAME:-}"
+add_setting "AppResources__AptToPdfEnabled" "${APPRESOURCES_APT_TO_PDF_ENABLED:-}"
+add_setting "AppResources__LegacyAptPdfExePath" "${APPRESOURCES_LEGACY_APT_PDF_EXE_PATH:-}"
+
 add_setting "ADFTriggerUrl" "${ADF_TRIGGER_URL:-}"
 add_setting "SendGridApiKey" "${SENDGRID_API_KEY:-}"
 add_setting "PollNotifyEmailFrom" "${POLL_NOTIFY_EMAIL_FROM:-}"
