@@ -1,0 +1,61 @@
+1) The existing migration template explicitly uses these for Azure login:
+ARM_TENANT_ID
+ARM_CLIENT_ID
+ARM_CLIENT_SECRET
+ARM_SUBSCRIPTION_ID
+
+Ask your DevOps/Azure team:
+
+"Please provide the existing GitLab CI/CD Azure service-principal credentials/variables for deploying the ODS Function App to DEV: ARM_TENANT_ID, ARM_CLIENT_ID, ARM_CLIENT_SECRET, and ARM_SUBSCRIPTION_ID."
+
+They should ideally already have these configured as GitLab CI/CD protected/masked variables at the group/project level.
+
+| Variable              | Where it comes from                                       | What it represents                              |
+| --------------------- | --------------------------------------------------------- | ----------------------------------------------- |
+| `ARM_TENANT_ID`       | Azure Entra ID → **Tenant ID**                            | Your organization's Azure tenant                |
+| `ARM_CLIENT_ID`       | Entra ID → **App registration → Application (client) ID** | Service principal/application used by CI/CD     |
+| `ARM_CLIENT_SECRET`   | Entra ID → **App registration → Certificates & secrets**  | Secret for that service principal               |
+| `ARM_SUBSCRIPTION_ID` | Azure Portal → **Subscriptions → Subscription ID**        | Azure subscription containing your Function App |
+
+
+
+2) One thing I would NOT add unnecessarily
+
+You don't need to add all of these manually:
+
+sast_scan:
+policy_scan:
+veracode_upload:
+artifactory_upload:
+aqua_scan:
+acs_scan:
+
+3) FOR WINDOWS USE BELOW :
+BUILD_OPTIONS: "-c Release -r win-x64 --self-contained false"
+
+--------------------------------------------------
+
+
+1) NuGet authentication during build
+
+NUGET_AUTH
+NUGET_CONFIG_PATH
+
+Your template copies NUGET_AUTH into the NuGet configuration before dotnet publish.
+
+2) Azure authentication during deployment
+
+ARM_TENANT_ID
+ARM_CLIENT_ID
+ARM_CLIENT_SECRET
+ARM_SUBSCRIPTION_ID
+
+-----------------------------------
+
+"Please provide the approved NuGet NuGet.Config / feed URLs and authentication configuration for DEV and CERT for the ODS Function App CI/CD pipeline."
+
+They should give you something similar to:
+
+Common NuGet feed
+DEV NuGet feed
+CERT NuGet feed
